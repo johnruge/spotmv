@@ -8,7 +8,10 @@ It can:
 
 - list every playlist you can access (`ls`)
 - move all tracks by a given artist from one playlist to another (`move-artist`)
+- gather an artist's tracks from every playlist you own into one playlist (`collect-artist`)
+- keep only an artist's tracks in a playlist, dropping everything else (`keep-artist`)
 - remove duplicate tracks from a playlist (`dedupe`)
+- list a playlist's songs with artists, who added them, and when (`tracks`)
 - show details about a playlist: track count, total length, owner, etc. (`info`)
 - rename a playlist (`rename`) or edit its description (`describe`)
 - store playlist aliases so you don't paste IDs/URLs repeatedly (`alias`)
@@ -71,8 +74,20 @@ spotmv move-artist --source gym --dest kendrick --artist "Kendrick Lamar"
 # actually do it
 spotmv move-artist --source gym --dest kendrick --artist "Kendrick Lamar" --apply
 
+# gather an artist from ALL playlists you own into one playlist
+spotmv collect-artist --dest kendrick --artist "Kendrick Lamar"
+spotmv collect-artist --dest kendrick --artist "Kendrick Lamar" --apply
+
+# keep only Kendrick's tracks in a playlist, drop the rest (dry-run by default)
+spotmv keep-artist gym --artist "Kendrick Lamar"
+spotmv keep-artist gym --artist "Kendrick Lamar" --apply
+
 spotmv dedupe gym
 spotmv dedupe gym --apply
+
+# list songs with artists, who added them, and when
+spotmv tracks gym
+spotmv tracks liked
 
 spotmv rename gym "Gym Bangers 2026"
 spotmv describe gym "songs for leg day"
