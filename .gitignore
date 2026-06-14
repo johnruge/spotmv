@@ -1,0 +1,6 @@
+.env
+.auth-cache
+__pycache__/
+*.pyc
+.venv/
+venv/

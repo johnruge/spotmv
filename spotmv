@@ -1,0 +1,562 @@
+#!/usr/bin/env python3
+"""spotmv - a small local CLI for managing Spotify playlists."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import sys
+from pathlib import Path
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
+
+try:
+    import spotipy
+    from spotipy.oauth2 import SpotifyOAuth
+except ImportError:
+    sys.stderr.write(
+        "error: the 'spotipy' package is required.\n"
+        "       install dependencies with: pip install -r requirements.txt\n"
+    )
+    sys.exit(1)
+
+
+BATCH_SIZE = 100
+SAVED_BATCH_SIZE = 50
+SCOPES = (
+    "playlist-read-private "
+    "playlist-read-collaborative "
+    "playlist-modify-public "
+    "playlist-modify-private "
+    "user-library-read "
+    "user-library-modify"
+)
+
+LIKED = "liked"
+LIKED_KEYS = {"liked", "liked-songs", "liked_songs", "saved"}
+
+CONFIG_DIR = Path(os.environ.get("SPOTMV_CONFIG_DIR", Path.home() / ".config" / "spotmv"))
+ALIASES_PATH = CONFIG_DIR / "aliases.json"
+CACHE_PATH = CONFIG_DIR / ".auth-cache"
+
+PLAYLIST_ID_RE = re.compile(r"^[A-Za-z0-9]{22}$")
+
+
+class SpotmvError(Exception):
+    """Raised for expected, user-facing failures."""
+
+
+# --------------------------------------------------------------------------- #
+# Environment / auth
+# --------------------------------------------------------------------------- #
+def load_env_file(path: Path = Path(".env")) -> None:
+    """Load simple KEY=VALUE pairs from a local .env file, if present."""
+    if not path.is_file():
+        return
+    for raw in path.read_text().splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        os.environ.setdefault(key, value)
+
+
+def get_client() -> spotipy.Spotify:
+    """Build an authenticated Spotify client from environment variables."""
+    load_env_file()
+
+    missing = [
+        name
+        for name in ("SPOTIPY_CLIENT_ID", "SPOTIPY_CLIENT_SECRET", "SPOTIPY_REDIRECT_URI")
+        if not os.environ.get(name)
+    ]
+    if missing:
+        raise SpotmvError(
+            "missing environment variables: "
+            + ", ".join(missing)
+            + "\nset them in your shell or in a local .env file (see .env.example)."
+        )
+
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        auth = SpotifyOAuth(
+            scope=SCOPES,
+            cache_path=str(CACHE_PATH),
+            open_browser=True,
+        )
+        client = spotipy.Spotify(auth_manager=auth, requests_timeout=30, retries=3)
+        client.current_user()
+        return client
+    except spotipy.SpotifyOauthError as exc:
+        raise SpotmvError(f"authentication failed: {exc}") from exc
+    except spotipy.SpotifyException as exc:
+        raise SpotmvError(f"could not authenticate with Spotify: {exc}") from exc
+
+
+# --------------------------------------------------------------------------- #
+# Playlist id parsing + aliases
+# --------------------------------------------------------------------------- #
+def parse_playlist_id(value: str) -> str:
+    """Normalize a raw id, open.spotify.com URL, or spotify:playlist: URI to an id."""
+    value = value.strip()
+    if not value:
+        raise SpotmvError("empty playlist reference")
+
+    if value.startswith("spotify:playlist:"):
+        candidate = value.split(":", 2)[2]
+    elif "open.spotify.com" in value:
+        match = re.search(r"playlist/([A-Za-z0-9]+)", value)
+        if not match:
+            raise SpotmvError(f"could not parse playlist id from url: {value}")
+        candidate = match.group(1)
+    else:
+        candidate = value
+
+    candidate = candidate.split("?", 1)[0]
+    if not PLAYLIST_ID_RE.match(candidate):
+        raise SpotmvError(f"invalid playlist id: {value}")
+    return candidate
+
+
+def load_aliases() -> Dict[str, str]:
+    if not ALIASES_PATH.is_file():
+        return {}
+    try:
+        data = json.loads(ALIASES_PATH.read_text())
+    except json.JSONDecodeError as exc:
+        raise SpotmvError(f"alias file is corrupt ({ALIASES_PATH}): {exc}") from exc
+    if not isinstance(data, dict):
+        raise SpotmvError(f"alias file has unexpected format: {ALIASES_PATH}")
+    return {str(k): str(v) for k, v in data.items()}
+
+
+def save_aliases(aliases: Dict[str, str]) -> None:
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    ALIASES_PATH.write_text(json.dumps(aliases, indent=2, sort_keys=True) + "\n")
+
+
+def resolve_playlist(ref: str) -> str:
+    """Resolve an alias name or any playlist reference into a playlist id."""
+    aliases = load_aliases()
+    if ref in aliases:
+        return aliases[ref]
+    try:
+        return parse_playlist_id(ref)
+    except SpotmvError as exc:
+        raise SpotmvError(
+            f"'{ref}' is not a known alias and is not a valid playlist id/url/uri"
+        ) from exc
+
+
+def resolve_target(ref: str) -> str:
+    """Resolve a reference into a playlist id, or the LIKED sentinel for Liked Songs."""
+    if ref.strip().lower() in LIKED_KEYS:
+        return LIKED
+    return resolve_playlist(ref)
+
+
+# --------------------------------------------------------------------------- #
+# Spotify fetch / filter / batch helpers
+# --------------------------------------------------------------------------- #
+def chunked(items: Sequence[Any], size: int = BATCH_SIZE) -> Iterator[List[Any]]:
+    for start in range(0, len(items), size):
+        yield list(items[start : start + size])
+
+
+def get_all_playlists(sp: spotipy.Spotify) -> List[Dict[str, Any]]:
+    playlists: List[Dict[str, Any]] = []
+    page = sp.current_user_playlists(limit=50)
+    while page:
+        playlists.extend(page.get("items") or [])
+        if page.get("next"):
+            page = sp.next(page)
+        else:
+            break
+    return playlists
+
+
+def get_all_playlist_items(sp: spotipy.Spotify, playlist_id: str) -> List[Dict[str, Any]]:
+    """Return every playlist item in order, handling pagination."""
+    items: List[Dict[str, Any]] = []
+    page = sp.playlist_items(
+        playlist_id,
+        limit=100,
+        additional_types=("track",),
+    )
+    while page:
+        items.extend(page.get("items") or [])
+        if page.get("next"):
+            page = sp.next(page)
+        else:
+            break
+    return items
+
+
+def is_usable_track(item: Dict[str, Any]) -> bool:
+    """True for a real, playable, non-local studio track (not a podcast episode)."""
+    track = item.get("track")
+    if not track:
+        return False
+    if track.get("type") != "track":
+        return False
+    if item.get("is_local") or track.get("is_local"):
+        return False
+    if track.get("is_playable") is False:
+        return False
+    if not track.get("uri"):
+        return False
+    return True
+
+
+def track_artist_names(track: Dict[str, Any]) -> List[str]:
+    return [a.get("name", "") for a in (track.get("artists") or [])]
+
+
+def playlist_meta(sp: spotipy.Spotify, playlist_id: str) -> Tuple[str, int]:
+    """Return (name, total_track_count) for a playlist."""
+    try:
+        data = sp.playlist(playlist_id, fields="name,tracks.total")
+    except spotipy.SpotifyException as exc:
+        if getattr(exc, "http_status", None) == 404:
+            raise SpotmvError(f"playlist not found: {playlist_id}") from exc
+        raise SpotmvError(f"could not load playlist {playlist_id}: {exc}") from exc
+    name = data.get("name") or "(unnamed)"
+    total = (data.get("tracks") or {}).get("total", 0)
+    return name, int(total)
+
+
+def uri_to_id(uri: str) -> str:
+    """spotify:track:<id> -> <id> (passes through a bare id)."""
+    return uri.rsplit(":", 1)[-1]
+
+
+def get_all_saved_tracks(sp: spotipy.Spotify) -> List[Dict[str, Any]]:
+    """Return every Liked Songs item in order, handling pagination."""
+    items: List[Dict[str, Any]] = []
+    page = sp.current_user_saved_tracks(limit=50)
+    while page:
+        items.extend(page.get("items") or [])
+        if page.get("next"):
+            page = sp.next(page)
+        else:
+            break
+    return items
+
+
+# --------------------------------------------------------------------------- #
+# Target abstraction: a target is a playlist id or the LIKED sentinel
+# --------------------------------------------------------------------------- #
+def target_meta(sp: spotipy.Spotify, target: str) -> Tuple[str, int]:
+    if target == LIKED:
+        page = sp.current_user_saved_tracks(limit=1)
+        return "Liked Songs", int(page.get("total", 0))
+    return playlist_meta(sp, target)
+
+
+def get_all_target_items(sp: spotipy.Spotify, target: str) -> List[Dict[str, Any]]:
+    if target == LIKED:
+        return get_all_saved_tracks(sp)
+    return get_all_playlist_items(sp, target)
+
+
+def add_to_target(sp: spotipy.Spotify, target: str, uris: Sequence[str]) -> None:
+    if target == LIKED:
+        ids = [uri_to_id(u) for u in uris]
+        for batch in chunked(ids, SAVED_BATCH_SIZE):
+            sp.current_user_saved_tracks_add(batch)
+    else:
+        for batch in chunked(list(uris), BATCH_SIZE):
+            sp.playlist_add_items(target, batch)
+
+
+def remove_all_from_target(sp: spotipy.Spotify, target: str, uris: Sequence[str]) -> None:
+    if target == LIKED:
+        ids = [uri_to_id(u) for u in uris]
+        for batch in chunked(ids, SAVED_BATCH_SIZE):
+            sp.current_user_saved_tracks_delete(batch)
+    else:
+        for batch in chunked(list(uris), BATCH_SIZE):
+            sp.playlist_remove_all_occurrences_of_items(target, batch)
+
+
+# --------------------------------------------------------------------------- #
+# Output helpers
+# --------------------------------------------------------------------------- #
+def render_table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
+    columns = list(zip(*([headers] + [list(r) for r in rows]))) if rows else [[h] for h in headers]
+    widths = [max(len(str(cell)) for cell in col) for col in columns]
+
+    def fmt(row: Sequence[str]) -> str:
+        return "  ".join(str(cell).ljust(widths[i]) for i, cell in enumerate(row))
+
+    line = "  ".join("-" * w for w in widths)
+    out = [fmt(headers), line]
+    out.extend(fmt(row) for row in rows)
+    return "\n".join(out)
+
+
+# --------------------------------------------------------------------------- #
+# Commands
+# --------------------------------------------------------------------------- #
+def cmd_ls(args: argparse.Namespace) -> int:
+    sp = get_client()
+    me_id = sp.current_user().get("id")
+    playlists = get_all_playlists(sp)
+
+    rows = []
+    for pl in playlists:
+        owner = pl.get("owner") or {}
+        owned = owner.get("id") == me_id
+        rows.append(
+            [
+                pl.get("name") or "(unnamed)",
+                pl.get("id") or "",
+                owner.get("display_name") or owner.get("id") or "",
+                str((pl.get("tracks") or {}).get("total", 0)),
+                "yes" if owned else "no",
+            ]
+        )
+
+    headers = ["NAME", "ID", "OWNER", "TRACKS", "OWNED"]
+    print(render_table(headers, rows))
+    print(f"\n{len(rows)} playlist(s)")
+    return 0
+
+
+def cmd_alias(args: argparse.Namespace) -> int:
+    aliases = load_aliases()
+
+    if args.alias_cmd == "add":
+        playlist_id = parse_playlist_id(args.target)
+        aliases[args.name] = playlist_id
+        save_aliases(aliases)
+        print(f"added alias '{args.name}' -> {playlist_id}")
+        return 0
+
+    if args.alias_cmd == "rm":
+        if args.name not in aliases:
+            raise SpotmvError(f"no such alias: {args.name}")
+        removed = aliases.pop(args.name)
+        save_aliases(aliases)
+        print(f"removed alias '{args.name}' (was {removed})")
+        return 0
+
+    if args.alias_cmd == "ls":
+        if not aliases:
+            print("no aliases defined")
+            return 0
+        rows = [[name, pid] for name, pid in sorted(aliases.items())]
+        print(render_table(["ALIAS", "PLAYLIST ID"], rows))
+        return 0
+
+    if args.alias_cmd == "resolve":
+        print(resolve_playlist(args.name))
+        return 0
+
+    raise SpotmvError("unknown alias subcommand")
+
+
+def cmd_move_artist(args: argparse.Namespace) -> int:
+    sp = get_client()
+    source = resolve_target(args.source)
+    dest = resolve_target(args.dest)
+    if source == dest:
+        raise SpotmvError("source and destination are the same")
+
+    artist = args.artist.strip()
+    artist_key = artist.lower()
+
+    source_name, source_total = target_meta(sp, source)
+    dest_name, dest_total = target_meta(sp, dest)
+
+    source_items = get_all_target_items(sp, source)
+    dest_items = get_all_target_items(sp, dest)
+
+    dest_uris = {
+        item["track"]["uri"] for item in dest_items if is_usable_track(item)
+    }
+
+    matching_uris_in_order: List[str] = []
+    matching_occurrences = 0
+    for item in source_items:
+        if not is_usable_track(item):
+            continue
+        track = item["track"]
+        if any(name.lower() == artist_key for name in track_artist_names(track)):
+            matching_occurrences += 1
+            uri = track["uri"]
+            if uri not in matching_uris_in_order:
+                matching_uris_in_order.append(uri)
+
+    unique_matching = set(matching_uris_in_order)
+    already_in_dest = sum(1 for uri in unique_matching if uri in dest_uris)
+    to_add = [uri for uri in matching_uris_in_order if uri not in dest_uris]
+
+    predicted_source = source_total - matching_occurrences
+    predicted_dest = dest_total + len(to_add)
+
+    def print_summary() -> None:
+        print(f"Source: {source_name}")
+        print(f"  Current count: {source_total}")
+        print(f"  Tracks by {artist} found: {matching_occurrences}")
+        print(f"  Would remove from source: {matching_occurrences}")
+        print(f"  Predicted source count: {predicted_source}")
+        print()
+        print(f"Destination: {dest_name}")
+        print(f"  Current count: {dest_total}")
+        print(f"  Would add to destination: {len(to_add)}")
+        print(f"  Already in destination: {already_in_dest}")
+        print(f"  Predicted destination count: {predicted_dest}")
+
+    if not args.apply:
+        print("DRY RUN: no changes made\n")
+        print_summary()
+        return 0
+
+    print_summary()
+    print()
+
+    if not matching_uris_in_order:
+        print("nothing to move.")
+        return 0
+
+    if to_add:
+        add_to_target(sp, dest, to_add)
+    remove_all_from_target(sp, source, matching_uris_in_order)
+
+    print("DONE")
+    print(f"  Added {len(to_add)} track(s) to {dest_name}.")
+    print(f"  Removed {matching_occurrences} track(s) from {source_name}.")
+    return 0
+
+
+def cmd_dedupe(args: argparse.Namespace) -> int:
+    sp = get_client()
+    if args.playlist.strip().lower() in LIKED_KEYS:
+        raise SpotmvError(
+            "dedupe is not supported for Liked Songs (it cannot contain duplicates)"
+        )
+    playlist_id = resolve_playlist(args.playlist)
+    name, total = playlist_meta(sp, playlist_id)
+    items = get_all_playlist_items(sp, playlist_id)
+
+    seen: set[str] = set()
+    # group duplicate positions by uri so spotify can remove specific occurrences
+    dup_positions: Dict[str, List[int]] = {}
+    duplicate_occurrences = 0
+    for position, item in enumerate(items):
+        if not is_usable_track(item):
+            continue
+        uri = item["track"]["uri"]
+        if uri in seen:
+            duplicate_occurrences += 1
+            dup_positions.setdefault(uri, []).append(position)
+        else:
+            seen.add(uri)
+
+    predicted = total - duplicate_occurrences
+
+    def print_summary() -> None:
+        print(f"Playlist: {name}")
+        print(f"  Current count: {total}")
+        print(f"  Duplicate occurrences found: {duplicate_occurrences}")
+        print(f"  Would remove: {duplicate_occurrences}")
+        print(f"  Predicted count after dedupe: {predicted}")
+
+    if not args.apply:
+        print("DRY RUN: no changes made\n")
+        print_summary()
+        return 0
+
+    print_summary()
+    print()
+
+    if duplicate_occurrences == 0:
+        print("no duplicates to remove.")
+        return 0
+
+    # pin to a single snapshot so positions stay valid across batches
+    snapshot_id = sp.playlist(playlist_id, fields="snapshot_id").get("snapshot_id")
+    payload = [
+        {"uri": uri, "positions": positions} for uri, positions in dup_positions.items()
+    ]
+    for batch in chunked(payload):
+        sp.playlist_remove_specific_occurrences_of_items(
+            playlist_id, batch, snapshot_id=snapshot_id
+        )
+
+    print("DONE")
+    print(f"  Removed {duplicate_occurrences} duplicate occurrence(s) from {name}.")
+    return 0
+
+
+# --------------------------------------------------------------------------- #
+# CLI wiring
+# --------------------------------------------------------------------------- #
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="spotmv",
+        description="Manage Spotify playlists from the command line.",
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    sub.add_parser("ls", help="list playlists accessible to you").set_defaults(
+        func=cmd_ls
+    )
+
+    alias = sub.add_parser("alias", help="manage playlist aliases")
+    alias_sub = alias.add_subparsers(dest="alias_cmd", required=True)
+    p_add = alias_sub.add_parser("add", help="add an alias")
+    p_add.add_argument("name")
+    p_add.add_argument("target", help="playlist id, url, or spotify:playlist: uri")
+    p_rm = alias_sub.add_parser("rm", help="remove an alias")
+    p_rm.add_argument("name")
+    alias_sub.add_parser("ls", help="list aliases")
+    p_res = alias_sub.add_parser("resolve", help="print the id an alias resolves to")
+    p_res.add_argument("name")
+    alias.set_defaults(func=cmd_alias)
+
+    move = sub.add_parser("move-artist", help="move an artist's tracks between playlists")
+    move.add_argument(
+        "--source", required=True, help="source playlist, alias, or 'liked'"
+    )
+    move.add_argument(
+        "--dest", required=True, help="destination playlist, alias, or 'liked'"
+    )
+    move.add_argument("--artist", required=True, help="artist name (case-insensitive)")
+    move.add_argument(
+        "--apply", action="store_true", help="perform changes (default is dry-run)"
+    )
+    move.set_defaults(func=cmd_move_artist)
+
+    dedupe = sub.add_parser("dedupe", help="remove duplicate tracks from a playlist")
+    dedupe.add_argument("playlist", help="playlist or alias")
+    dedupe.add_argument(
+        "--apply", action="store_true", help="perform changes (default is dry-run)"
+    )
+    dedupe.set_defaults(func=cmd_dedupe)
+
+    return parser
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        return args.func(args)
+    except SpotmvError as exc:
+        sys.stderr.write(f"error: {exc}\n")
+        return 1
+    except spotipy.SpotifyException as exc:
+        sys.stderr.write(f"spotify api error: {exc}\n")
+        return 1
+    except KeyboardInterrupt:
+        sys.stderr.write("\naborted.\n")
+        return 130
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
