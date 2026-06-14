@@ -493,6 +493,29 @@ def cmd_dedupe(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_rename(args: argparse.Namespace) -> int:
+    new_name = args.name.strip()
+    if not new_name:
+        raise SpotmvError("new playlist name cannot be empty")
+    if args.playlist.strip().lower() in LIKED_KEYS:
+        raise SpotmvError("Liked Songs cannot be renamed (it is not a playlist)")
+
+    sp = get_client()
+    playlist_id = resolve_playlist(args.playlist)
+    old_name, _ = playlist_meta(sp, playlist_id)
+    try:
+        sp.playlist_change_details(playlist_id, name=new_name)
+    except spotipy.SpotifyException as exc:
+        if getattr(exc, "http_status", None) == 403:
+            raise SpotmvError(
+                f"not allowed to rename this playlist (you may not be the owner): {old_name}"
+            ) from exc
+        raise SpotmvError(f"could not rename playlist: {exc}") from exc
+
+    print(f"renamed '{old_name}' -> '{new_name}'")
+    return 0
+
+
 # --------------------------------------------------------------------------- #
 # CLI wiring
 # --------------------------------------------------------------------------- #
@@ -538,6 +561,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--apply", action="store_true", help="perform changes (default is dry-run)"
     )
     dedupe.set_defaults(func=cmd_dedupe)
+
+    rename = sub.add_parser("rename", help="change a playlist's name")
+    rename.add_argument("playlist", help="playlist or alias")
+    rename.add_argument("name", help="the new playlist name")
+    rename.set_defaults(func=cmd_rename)
 
     return parser
 

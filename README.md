@@ -9,6 +9,7 @@ It can:
 - list every playlist you can access (`ls`)
 - move all tracks by a given artist from one playlist to another (`move-artist`)
 - remove duplicate tracks from a playlist (`dedupe`)
+- rename a playlist (`rename`)
 - store playlist aliases so you don't paste IDs/URLs repeatedly (`alias`)
 
 **All destructive actions are dry-run by default.** Nothing changes on Spotify
@@ -71,6 +72,8 @@ spotmv move-artist --source gym --dest kendrick --artist "Kendrick Lamar" --appl
 
 spotmv dedupe gym
 spotmv dedupe gym --apply
+
+spotmv rename gym "Gym Bangers 2026"
 ```
 
 Aliases work anywhere a playlist argument is accepted. You can also pass a raw
