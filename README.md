@@ -12,6 +12,7 @@ It can:
 - keep only an artist's tracks in a playlist, dropping everything else (`keep-artist`)
 - remove duplicate tracks from a playlist (`dedupe`)
 - list a playlist's songs with artists, who added them, and when (`tracks`)
+- reorder a playlist by a track attribute (`sort`)
 - show details about a playlist: track count, total length, owner, etc. (`info`)
 - rename a playlist (`rename`) or edit its description (`describe`)
 - store playlist aliases so you don't paste IDs/URLs repeatedly (`alias`)
@@ -88,6 +89,13 @@ spotmv dedupe gym --apply
 # list songs with artists, who added them, and when
 spotmv tracks gym
 spotmv tracks liked
+
+# reorder a playlist (dry-run by default)
+# keys: release (release date), added (date added), duration, title, artist
+spotmv sort gym --by added
+spotmv sort gym --by duration --apply
+spotmv sort gym --by title --ascending --apply
+```
 
 spotmv rename gym "Gym Bangers 2026"
 spotmv describe gym "songs for leg day"
