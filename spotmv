@@ -9,7 +9,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Sequence
 
 try:
     import spotipy
@@ -195,9 +195,18 @@ def get_all_playlist_items(sp: spotipy.Spotify, playlist_id: str) -> List[Dict[s
     return items
 
 
+def item_track(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Return the track object from a playlist/saved item.
+
+    Spotify returns it under 'track' for saved tracks and (more recently)
+    under 'item' for playlist items.
+    """
+    return item.get("track") or item.get("item")
+
+
 def is_usable_track(item: Dict[str, Any]) -> bool:
     """True for a real, playable, non-local studio track (not a podcast episode)."""
-    track = item.get("track")
+    track = item_track(item)
     if not track:
         return False
     if track.get("type") != "track":
@@ -215,22 +224,32 @@ def track_artist_names(track: Dict[str, Any]) -> List[str]:
     return [a.get("name", "") for a in (track.get("artists") or [])]
 
 
-def playlist_meta(sp: spotipy.Spotify, playlist_id: str) -> Tuple[str, int]:
-    """Return (name, total_track_count) for a playlist."""
+def playlist_name(sp: spotipy.Spotify, playlist_id: str) -> str:
+    """Return a playlist's name (track counts are derived from fetched items)."""
     try:
-        data = sp.playlist(playlist_id, fields="name,tracks.total")
+        data = sp.playlist(playlist_id, fields="name")
     except spotipy.SpotifyException as exc:
         if getattr(exc, "http_status", None) == 404:
             raise SpotmvError(f"playlist not found: {playlist_id}") from exc
         raise SpotmvError(f"could not load playlist {playlist_id}: {exc}") from exc
-    name = data.get("name") or "(unnamed)"
-    total = (data.get("tracks") or {}).get("total", 0)
-    return name, int(total)
+    return data.get("name") or "(unnamed)"
 
 
 def uri_to_id(uri: str) -> str:
     """spotify:track:<id> -> <id> (passes through a bare id)."""
     return uri.rsplit(":", 1)[-1]
+
+
+def format_duration(ms: int) -> str:
+    """Format milliseconds as e.g. '3h 24m 11s'."""
+    seconds = ms // 1000
+    hours, seconds = divmod(seconds, 3600)
+    minutes, seconds = divmod(seconds, 60)
+    if hours:
+        return f"{hours}h {minutes}m {seconds}s"
+    if minutes:
+        return f"{minutes}m {seconds}s"
+    return f"{seconds}s"
 
 
 def get_all_saved_tracks(sp: spotipy.Spotify) -> List[Dict[str, Any]]:
@@ -249,11 +268,10 @@ def get_all_saved_tracks(sp: spotipy.Spotify) -> List[Dict[str, Any]]:
 # --------------------------------------------------------------------------- #
 # Target abstraction: a target is a playlist id or the LIKED sentinel
 # --------------------------------------------------------------------------- #
-def target_meta(sp: spotipy.Spotify, target: str) -> Tuple[str, int]:
+def target_name(sp: spotipy.Spotify, target: str) -> str:
     if target == LIKED:
-        page = sp.current_user_saved_tracks(limit=1)
-        return "Liked Songs", int(page.get("total", 0))
-    return playlist_meta(sp, target)
+        return "Liked Songs"
+    return playlist_name(sp, target)
 
 
 def get_all_target_items(sp: spotipy.Spotify, target: str) -> List[Dict[str, Any]]:
@@ -369,14 +387,16 @@ def cmd_move_artist(args: argparse.Namespace) -> int:
     artist = args.artist.strip()
     artist_key = artist.lower()
 
-    source_name, source_total = target_meta(sp, source)
-    dest_name, dest_total = target_meta(sp, dest)
+    source_name = target_name(sp, source)
+    dest_name = target_name(sp, dest)
 
     source_items = get_all_target_items(sp, source)
     dest_items = get_all_target_items(sp, dest)
+    source_total = len(source_items)
+    dest_total = len(dest_items)
 
     dest_uris = {
-        item["track"]["uri"] for item in dest_items if is_usable_track(item)
+        item_track(item)["uri"] for item in dest_items if is_usable_track(item)
     }
 
     matching_uris_in_order: List[str] = []
@@ -384,7 +404,7 @@ def cmd_move_artist(args: argparse.Namespace) -> int:
     for item in source_items:
         if not is_usable_track(item):
             continue
-        track = item["track"]
+        track = item_track(item)
         if any(name.lower() == artist_key for name in track_artist_names(track)):
             matching_occurrences += 1
             uri = track["uri"]
@@ -440,8 +460,9 @@ def cmd_dedupe(args: argparse.Namespace) -> int:
             "dedupe is not supported for Liked Songs (it cannot contain duplicates)"
         )
     playlist_id = resolve_playlist(args.playlist)
-    name, total = playlist_meta(sp, playlist_id)
+    name = playlist_name(sp, playlist_id)
     items = get_all_playlist_items(sp, playlist_id)
+    total = len(items)
 
     seen: set[str] = set()
     # group duplicate positions by uri so spotify can remove specific occurrences
@@ -450,7 +471,7 @@ def cmd_dedupe(args: argparse.Namespace) -> int:
     for position, item in enumerate(items):
         if not is_usable_track(item):
             continue
-        uri = item["track"]["uri"]
+        uri = item_track(item)["uri"]
         if uri in seen:
             duplicate_occurrences += 1
             dup_positions.setdefault(uri, []).append(position)
@@ -493,6 +514,55 @@ def cmd_dedupe(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_info(args: argparse.Namespace) -> int:
+    sp = get_client()
+    target = resolve_target(args.playlist)
+    items = get_all_target_items(sp, target)
+
+    total_ms = sum(
+        ((item_track(item) or {}).get("duration_ms") or 0) for item in items
+    )
+    playable = sum(1 for item in items if is_usable_track(item))
+
+    if target == LIKED:
+        print("Liked Songs")
+        print(f"  Tracks:       {len(items)}")
+        print(f"  Total length: {format_duration(total_ms)}")
+        return 0
+
+    data = sp.playlist(
+        target,
+        fields=(
+            "name,description,public,collaborative,id,"
+            "owner.display_name,owner.id,followers.total,external_urls.spotify"
+        ),
+    )
+    me_id = sp.current_user().get("id")
+    owner = data.get("owner") or {}
+    owned = owner.get("id") == me_id
+
+    visibility = "public" if data.get("public") else "private"
+    if data.get("collaborative"):
+        visibility += ", collaborative"
+
+    print(f"Playlist: {data.get('name') or '(unnamed)'}")
+    print(f"  ID:           {data.get('id') or target}")
+    owner_label = owner.get("display_name") or owner.get("id") or "?"
+    print(f"  Owner:        {owner_label}{' (you)' if owned else ''}")
+    print(f"  Visibility:   {visibility}")
+    if data.get("description"):
+        print(f"  Description:  {data['description']}")
+    print(f"  Followers:    {(data.get('followers') or {}).get('total', 0)}")
+    print(f"  Tracks:       {len(items)}")
+    if playable != len(items):
+        print(f"  Playable:     {playable}")
+    print(f"  Total length: {format_duration(total_ms)}")
+    url = (data.get("external_urls") or {}).get("spotify")
+    if url:
+        print(f"  URL:          {url}")
+    return 0
+
+
 def cmd_rename(args: argparse.Namespace) -> int:
     new_name = args.name.strip()
     if not new_name:
@@ -502,7 +572,7 @@ def cmd_rename(args: argparse.Namespace) -> int:
 
     sp = get_client()
     playlist_id = resolve_playlist(args.playlist)
-    old_name, _ = playlist_meta(sp, playlist_id)
+    old_name = playlist_name(sp, playlist_id)
     try:
         sp.playlist_change_details(playlist_id, name=new_name)
     except spotipy.SpotifyException as exc:
@@ -513,6 +583,30 @@ def cmd_rename(args: argparse.Namespace) -> int:
         raise SpotmvError(f"could not rename playlist: {exc}") from exc
 
     print(f"renamed '{old_name}' -> '{new_name}'")
+    return 0
+
+
+def cmd_describe(args: argparse.Namespace) -> int:
+    if args.playlist.strip().lower() in LIKED_KEYS:
+        raise SpotmvError("Liked Songs has no editable description (it is not a playlist)")
+
+    description = args.description
+    sp = get_client()
+    playlist_id = resolve_playlist(args.playlist)
+    name = playlist_name(sp, playlist_id)
+    try:
+        sp.playlist_change_details(playlist_id, description=description)
+    except spotipy.SpotifyException as exc:
+        if getattr(exc, "http_status", None) == 403:
+            raise SpotmvError(
+                f"not allowed to edit this playlist (you may not be the owner): {name}"
+            ) from exc
+        raise SpotmvError(f"could not update description: {exc}") from exc
+
+    if description.strip():
+        print(f"updated description for '{name}'")
+    else:
+        print(f"cleared description for '{name}'")
     return 0
 
 
@@ -566,6 +660,17 @@ def build_parser() -> argparse.ArgumentParser:
     rename.add_argument("playlist", help="playlist or alias")
     rename.add_argument("name", help="the new playlist name")
     rename.set_defaults(func=cmd_rename)
+
+    info = sub.add_parser("info", help="show details about a playlist")
+    info.add_argument("playlist", help="playlist, alias, or 'liked'")
+    info.set_defaults(func=cmd_info)
+
+    describe = sub.add_parser("describe", help="set a playlist's description")
+    describe.add_argument("playlist", help="playlist or alias")
+    describe.add_argument(
+        "description", help="the new description (pass an empty string to clear)"
+    )
+    describe.set_defaults(func=cmd_describe)
 
     return parser
 
