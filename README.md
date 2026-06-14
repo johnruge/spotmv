@@ -95,7 +95,6 @@ spotmv tracks liked
 spotmv sort gym --by added
 spotmv sort gym --by duration --apply
 spotmv sort gym --by title --ascending --apply
-```
 
 spotmv rename gym "Gym Bangers 2026"
 spotmv describe gym "songs for leg day"
