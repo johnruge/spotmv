@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Sequence
 
 try:
+    import requests
     import spotipy
     from spotipy.oauth2 import SpotifyOAuth
 except ImportError:
@@ -89,7 +90,9 @@ def get_client() -> spotipy.Spotify:
             cache_path=str(CACHE_PATH),
             open_browser=True,
         )
-        client = spotipy.Spotify(auth_manager=auth, requests_timeout=30, retries=3)
+        # retries=0 so we fail fast on HTTP 429 instead of letting spotipy sleep
+        # for the (sometimes enormous) Retry-After interval.
+        client = spotipy.Spotify(auth_manager=auth, requests_timeout=30, retries=0)
         client.current_user()
         return client
     except spotipy.SpotifyOauthError as exc:
@@ -559,67 +562,6 @@ def cmd_collect_artist(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_dedupe(args: argparse.Namespace) -> int:
-    sp = get_client()
-    if args.playlist.strip().lower() in LIKED_KEYS:
-        raise SpotmvError(
-            "dedupe is not supported for Liked Songs (it cannot contain duplicates)"
-        )
-    playlist_id = resolve_playlist(args.playlist)
-    name = playlist_name(sp, playlist_id)
-    items = get_all_playlist_items(sp, playlist_id)
-    total = len(items)
-
-    seen: set[str] = set()
-    # group duplicate positions by uri so spotify can remove specific occurrences
-    dup_positions: Dict[str, List[int]] = {}
-    duplicate_occurrences = 0
-    for position, item in enumerate(items):
-        if not is_usable_track(item):
-            continue
-        uri = item_track(item)["uri"]
-        if uri in seen:
-            duplicate_occurrences += 1
-            dup_positions.setdefault(uri, []).append(position)
-        else:
-            seen.add(uri)
-
-    predicted = total - duplicate_occurrences
-
-    def print_summary() -> None:
-        print(f"Playlist: {name}")
-        print(f"  Current count: {total}")
-        print(f"  Duplicate occurrences found: {duplicate_occurrences}")
-        print(f"  Would remove: {duplicate_occurrences}")
-        print(f"  Predicted count after dedupe: {predicted}")
-
-    if not args.apply:
-        print("DRY RUN: no changes made\n")
-        print_summary()
-        return 0
-
-    print_summary()
-    print()
-
-    if duplicate_occurrences == 0:
-        print("no duplicates to remove.")
-        return 0
-
-    # pin to a single snapshot so positions stay valid across batches
-    snapshot_id = sp.playlist(playlist_id, fields="snapshot_id").get("snapshot_id")
-    payload = [
-        {"uri": uri, "positions": positions} for uri, positions in dup_positions.items()
-    ]
-    for batch in chunked(payload):
-        sp.playlist_remove_specific_occurrences_of_items(
-            playlist_id, batch, snapshot_id=snapshot_id
-        )
-
-    print("DONE")
-    print(f"  Removed {duplicate_occurrences} duplicate occurrence(s) from {name}.")
-    return 0
-
-
 SORT_KEYS = ("release", "added", "duration", "title", "artist")
 DEFAULT_DESCENDING = {"release", "added"}
 
@@ -958,13 +900,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     collect.set_defaults(func=cmd_collect_artist)
 
-    dedupe = sub.add_parser("dedupe", help="remove duplicate tracks from a playlist")
-    dedupe.add_argument("playlist", help="playlist or alias")
-    dedupe.add_argument(
-        "--apply", action="store_true", help="perform changes (default is dry-run)"
-    )
-    dedupe.set_defaults(func=cmd_dedupe)
-
     rename = sub.add_parser("rename", help="change a playlist's name")
     rename.add_argument("playlist", help="playlist or alias")
     rename.add_argument("name", help="the new playlist name")
@@ -1025,6 +960,33 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _format_seconds(seconds: int) -> str:
+    if seconds >= 3600:
+        return f"{seconds // 3600}h {(seconds % 3600) // 60}m"
+    if seconds >= 60:
+        return f"{seconds // 60}m {seconds % 60}s"
+    return f"{seconds}s"
+
+
+def _handle_rate_limit(exc: spotipy.SpotifyException) -> None:
+    headers = getattr(exc, "headers", None) or {}
+    retry_after = headers.get("Retry-After") if hasattr(headers, "get") else None
+    sys.stderr.write("error: Spotify is rate-limiting this app (HTTP 429).\n")
+    if retry_after:
+        try:
+            secs = int(retry_after)
+            sys.stderr.write(
+                f"       Spotify asks to wait ~{_format_seconds(secs)} before retrying.\n"
+            )
+        except ValueError:
+            pass
+    sys.stderr.write(
+        "       Rate limits are per Spotify app and reset after the wait above.\n"
+        "       Tip: avoid running large scans repeatedly; if you're blocked for a\n"
+        "       long time, you can create a new app in the dashboard for a fresh limit.\n"
+    )
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -1034,7 +996,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         sys.stderr.write(f"error: {exc}\n")
         return 1
     except spotipy.SpotifyException as exc:
-        sys.stderr.write(f"spotify api error: {exc}\n")
+        if getattr(exc, "http_status", None) == 429:
+            _handle_rate_limit(exc)
+        else:
+            sys.stderr.write(f"spotify api error: {exc}\n")
+        return 1
+    except requests.exceptions.RequestException as exc:
+        sys.stderr.write(f"error: network problem talking to Spotify: {exc}\n")
         return 1
     except KeyboardInterrupt:
         sys.stderr.write("\naborted.\n")

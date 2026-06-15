@@ -10,7 +10,6 @@ It can:
 - move all tracks by a given artist from one playlist to another (`move-artist`)
 - gather an artist's tracks from every playlist you own into one playlist (`collect-artist`)
 - keep only an artist's tracks in a playlist, dropping everything else (`keep-artist`)
-- remove duplicate tracks from a playlist (`dedupe`)
 - list a playlist's songs with artists, who added them, and when (`tracks`)
 - reorder a playlist by a track attribute (`sort`)
 - show details about a playlist: track count, total length, owner, etc. (`info`)
@@ -83,9 +82,6 @@ spotmv collect-artist --dest kendrick --artist "Kendrick Lamar" --apply
 spotmv keep-artist gym --artist "Kendrick Lamar"
 spotmv keep-artist gym --artist "Kendrick Lamar" --apply
 
-spotmv dedupe gym
-spotmv dedupe gym --apply
-
 # list songs with artists, who added them, and when
 spotmv tracks gym
 spotmv tracks liked
@@ -122,8 +118,6 @@ spotmv move-artist --source liked --dest kendrick --artist "Kendrick Lamar" --ap
 # or pull an artist out of a playlist into Liked Songs
 spotmv move-artist --source gym --dest liked --artist "Kendrick Lamar" --apply
 ```
-
-`dedupe liked` is not supported, since Liked Songs cannot contain duplicates.
 
 > Note: `liked` support uses the `user-library-read` and `user-library-modify`
 > scopes. If you authorized an earlier version, the first run after updating will
