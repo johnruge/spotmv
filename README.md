@@ -92,9 +92,11 @@ spotmv tracks liked
 
 # reorder a playlist (dry-run by default)
 # keys: release (release date), added (date added), duration, title, artist
-spotmv sort gym --by added
-spotmv sort gym --by duration --apply
-spotmv sort gym --by title --ascending --apply
+# default direction: release/added = descending; duration/title/artist = ascending
+# override with --ascending / --descending
+spotmv sort gym --by added              # newest additions first
+spotmv sort gym --by duration --apply   # shortest songs first
+spotmv sort gym --by duration --descending --apply
 
 spotmv rename gym "Gym Bangers 2026"
 spotmv describe gym "songs for leg day"

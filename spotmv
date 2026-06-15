@@ -621,6 +621,7 @@ def cmd_dedupe(args: argparse.Namespace) -> int:
 
 
 SORT_KEYS = ("release", "added", "duration", "title", "artist")
+DEFAULT_DESCENDING = {"release", "added"}
 
 
 def _sort_key_func(key: str):
@@ -666,7 +667,13 @@ def cmd_sort(args: argparse.Namespace) -> int:
             "(they cannot be re-added via the API)"
         )
 
-    descending = not args.ascending
+    if args.ascending:
+        descending = False
+    elif args.descending:
+        descending = True
+    else:
+        descending = args.by in DEFAULT_DESCENDING
+
     ordered = sorted(items, key=_sort_key_func(args.by), reverse=descending)
 
     direction = "descending" if descending else "ascending"
@@ -989,10 +996,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--by",
         required=True,
         choices=SORT_KEYS,
-        help="sort key: release date, date added, duration, title, or artist",
+        help="sort key: release date, date added, duration, title, or artist "
+        "(default direction: release/added descending, duration/title/artist ascending)",
     )
-    srt.add_argument(
-        "--ascending", action="store_true", help="sort ascending instead of descending"
+    direction = srt.add_mutually_exclusive_group()
+    direction.add_argument(
+        "--ascending", action="store_true", help="force ascending order"
+    )
+    direction.add_argument(
+        "--descending", action="store_true", help="force descending order"
     )
     srt.add_argument(
         "--apply", action="store_true", help="perform changes (default is dry-run)"
