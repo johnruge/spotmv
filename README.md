@@ -8,8 +8,8 @@ It can:
 
 - list every playlist you can access (`ls`)
 - move all tracks by a given artist from one playlist to another (`move-artist`)
+- move every track from one playlist into another (`move-all`)
 - gather an artist's tracks from every playlist you own into one playlist (`collect-artist`)
-- keep only an artist's tracks in a playlist, dropping everything else (`keep-artist`)
 - list a playlist's songs with artists, who added them, and when (`tracks`)
 - reorder a playlist by a track attribute (`sort`)
 - show details about a playlist: track count, total length, owner, etc. (`info`)
@@ -74,13 +74,13 @@ spotmv move-artist --source gym --dest kendrick --artist "Kendrick Lamar"
 # actually do it
 spotmv move-artist --source gym --dest kendrick --artist "Kendrick Lamar" --apply
 
+# move ALL tracks from one playlist into another (dry-run by default)
+spotmv move-all --source gym --dest kendrick
+spotmv move-all --source gym --dest kendrick --apply
+
 # gather an artist from ALL playlists you own into one playlist
 spotmv collect-artist --dest kendrick --artist "Kendrick Lamar"
 spotmv collect-artist --dest kendrick --artist "Kendrick Lamar" --apply
-
-# keep only Kendrick's tracks in a playlist, drop the rest (dry-run by default)
-spotmv keep-artist gym --artist "Kendrick Lamar"
-spotmv keep-artist gym --artist "Kendrick Lamar" --apply
 
 # list songs with artists, who added them, and when
 spotmv tracks gym
@@ -90,7 +90,6 @@ spotmv tracks liked
 # keys: release (release date), added (date added), duration, title, artist
 # default direction: release/added = descending; duration/title/artist = ascending
 # override with --ascending / --descending
-spotmv sort gym --by added              # newest additions first
 spotmv sort gym --by duration --apply   # shortest songs first
 spotmv sort gym --by duration --descending --apply
 

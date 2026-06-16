@@ -175,7 +175,7 @@ def get_all_playlists(sp: spotipy.Spotify) -> List[Dict[str, Any]]:
     playlists: List[Dict[str, Any]] = []
     page = sp.current_user_playlists(limit=50)
     while page:
-        playlists.extend(page.get("items") or [])
+        playlists.extend(pl for pl in (page.get("items") or []) if pl)
         if page.get("next"):
             page = sp.next(page)
         else:
@@ -338,14 +338,13 @@ def cmd_ls(args: argparse.Namespace) -> int:
                 pl.get("name") or "(unnamed)",
                 pl.get("id") or "",
                 owner.get("display_name") or owner.get("id") or "",
-                str((pl.get("tracks") or {}).get("total", 0)),
                 "yes" if owned else "no",
             ]
         )
 
-    headers = ["NAME", "ID", "OWNER", "TRACKS", "OWNED"]
+    headers = ["NAME", "ID", "OWNER", "OWNED"]
     print(render_table(headers, rows))
-    print(f"\n{len(rows)} playlist(s)")
+    print(f"\n{len(rows)} playlist(s) (use 'spotmv info <playlist>' for track counts)")
     return 0
 
 
@@ -455,6 +454,76 @@ def cmd_move_artist(args: argparse.Namespace) -> int:
     print("DONE")
     print(f"  Added {len(to_add)} track(s) to {dest_name}.")
     print(f"  Removed {matching_occurrences} track(s) from {source_name}.")
+    return 0
+
+
+def cmd_move_all(args: argparse.Namespace) -> int:
+    sp = get_client()
+    source = resolve_target(args.source)
+    dest = resolve_target(args.dest)
+    if source == dest:
+        raise SpotmvError("source and destination are the same")
+
+    source_name = target_name(sp, source)
+    dest_name = target_name(sp, dest)
+
+    source_items = get_all_target_items(sp, source)
+    dest_items = get_all_target_items(sp, dest)
+    source_total = len(source_items)
+    dest_total = len(dest_items)
+
+    dest_uris = {
+        item_track(item)["uri"] for item in dest_items if is_usable_track(item)
+    }
+
+    moving_uris_in_order: List[str] = []
+    moving_occurrences = 0
+    for item in source_items:
+        if not is_usable_track(item):
+            continue
+        moving_occurrences += 1
+        uri = item_track(item)["uri"]
+        if uri not in moving_uris_in_order:
+            moving_uris_in_order.append(uri)
+
+    already_in_dest = sum(1 for uri in set(moving_uris_in_order) if uri in dest_uris)
+    to_add = [uri for uri in moving_uris_in_order if uri not in dest_uris]
+
+    predicted_source = source_total - moving_occurrences
+    predicted_dest = dest_total + len(to_add)
+
+    def print_summary() -> None:
+        print(f"Source: {source_name}")
+        print(f"  Current count: {source_total}")
+        print(f"  Movable tracks: {moving_occurrences}")
+        print(f"  Would remove from source: {moving_occurrences}")
+        print(f"  Predicted source count: {predicted_source}")
+        print()
+        print(f"Destination: {dest_name}")
+        print(f"  Current count: {dest_total}")
+        print(f"  Would add to destination: {len(to_add)}")
+        print(f"  Already in destination: {already_in_dest}")
+        print(f"  Predicted destination count: {predicted_dest}")
+
+    if not args.apply:
+        print("DRY RUN: no changes made\n")
+        print_summary()
+        return 0
+
+    print_summary()
+    print()
+
+    if not moving_uris_in_order:
+        print("nothing to move.")
+        return 0
+
+    if to_add:
+        add_to_target(sp, dest, to_add)
+    remove_all_from_target(sp, source, moving_uris_in_order)
+
+    print("DONE")
+    print(f"  Added {len(to_add)} track(s) to {dest_name}.")
+    print(f"  Removed {moving_occurrences} track(s) from {source_name}.")
     return 0
 
 
@@ -659,70 +728,6 @@ def cmd_sort(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_keep_artist(args: argparse.Namespace) -> int:
-    if args.playlist.strip().lower() in LIKED_KEYS:
-        raise SpotmvError("keep-artist is only supported for playlists, not Liked Songs")
-
-    sp = get_client()
-    playlist_id = resolve_playlist(args.playlist)
-    artist = args.artist.strip()
-    artist_key = artist.lower()
-
-    name = playlist_name(sp, playlist_id)
-    items = get_all_playlist_items(sp, playlist_id)
-    total = len(items)
-
-    kept = 0
-    removed_occurrences = 0
-    skipped = 0
-    remove_uris: List[str] = []
-    remove_seen: set[str] = set()
-    for item in items:
-        if not is_usable_track(item):
-            skipped += 1
-            continue
-        track = item_track(item)
-        if any(n.lower() == artist_key for n in track_artist_names(track)):
-            kept += 1
-        else:
-            removed_occurrences += 1
-            uri = track["uri"]
-            if uri not in remove_seen:
-                remove_seen.add(uri)
-                remove_uris.append(uri)
-
-    predicted = total - removed_occurrences
-
-    def print_summary() -> None:
-        print(f"Playlist: {name}")
-        print(f"  Current count: {total}")
-        print(f"  Artist to keep: {artist}")
-        print(f"  Tracks with {artist}: {kept}")
-        print(f"  Tracks without {artist}: {removed_occurrences} (would remove)")
-        if skipped:
-            print(f"  Skipped (local/unavailable/non-track): {skipped}")
-        print(f"  Predicted count after: {predicted}")
-
-    if not args.apply:
-        print("DRY RUN: no changes made\n")
-        print_summary()
-        return 0
-
-    print_summary()
-    print()
-
-    if not remove_uris:
-        print("nothing to remove.")
-        return 0
-
-    for batch in chunked(remove_uris):
-        sp.playlist_remove_all_occurrences_of_items(playlist_id, batch)
-
-    print("DONE")
-    print(f"  Removed {removed_occurrences} track(s) without {artist} from {name}.")
-    return 0
-
-
 def cmd_tracks(args: argparse.Namespace) -> int:
     sp = get_client()
     target = resolve_target(args.playlist)
@@ -889,6 +894,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     move.set_defaults(func=cmd_move_artist)
 
+    move_all = sub.add_parser(
+        "move-all", help="move ALL tracks from one playlist into another"
+    )
+    move_all.add_argument(
+        "--source", required=True, help="source playlist, alias, or 'liked'"
+    )
+    move_all.add_argument(
+        "--dest", required=True, help="destination playlist, alias, or 'liked'"
+    )
+    move_all.add_argument(
+        "--apply", action="store_true", help="perform changes (default is dry-run)"
+    )
+    move_all.set_defaults(func=cmd_move_all)
+
     collect = sub.add_parser(
         "collect-artist",
         help="move an artist's tracks from ALL playlists you own into one playlist",
@@ -904,17 +923,6 @@ def build_parser() -> argparse.ArgumentParser:
     rename.add_argument("playlist", help="playlist or alias")
     rename.add_argument("name", help="the new playlist name")
     rename.set_defaults(func=cmd_rename)
-
-    keep = sub.add_parser(
-        "keep-artist",
-        help="remove tracks that do NOT include a given artist from a playlist",
-    )
-    keep.add_argument("playlist", help="playlist or alias")
-    keep.add_argument("--artist", required=True, help="artist to keep (case-insensitive)")
-    keep.add_argument(
-        "--apply", action="store_true", help="perform changes (default is dry-run)"
-    )
-    keep.set_defaults(func=cmd_keep_artist)
 
     tracks = sub.add_parser(
         "tracks", help="list songs in a playlist with artists, who added them, and when"
