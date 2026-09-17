@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import logging
 import os
-import re
 import sys
 from typing import Any, Dict, Iterator, List, Optional, Sequence
 
@@ -25,6 +24,14 @@ from . import config  # noqa: E402  (must follow the import check above)
 from .config import load_aliases, load_env_file, save_aliases  # noqa: E402
 from .errors import SpotmvError  # noqa: E402
 from .output import format_duration, render_table  # noqa: E402
+from .refs import (  # noqa: E402
+    LIKED,
+    LIKED_KEYS,
+    parse_playlist_id,
+    resolve_playlist,
+    resolve_target,
+    uri_to_id,
+)
 
 
 BATCH_SIZE = 100
@@ -37,12 +44,6 @@ SCOPES = (
     "user-library-read "
     "user-library-modify"
 )
-
-LIKED = "liked"
-LIKED_KEYS = {"liked", "liked-songs", "liked_songs", "saved"}
-
-PLAYLIST_ID_RE = re.compile(r"^[A-Za-z0-9]{22}$")
-
 # --------------------------------------------------------------------------- #
 # Environment / auth
 # --------------------------------------------------------------------------- #
@@ -79,51 +80,6 @@ def get_client() -> spotipy.Spotify:
         raise SpotmvError(f"authentication failed: {exc}") from exc
     except spotipy.SpotifyException as exc:
         raise SpotmvError(f"could not authenticate with Spotify: {exc}") from exc
-
-
-# --------------------------------------------------------------------------- #
-# Playlist id parsing + aliases
-# --------------------------------------------------------------------------- #
-def parse_playlist_id(value: str) -> str:
-    """Normalize a raw id, open.spotify.com URL, or spotify:playlist: URI to an id."""
-    value = value.strip()
-    if not value:
-        raise SpotmvError("empty playlist reference")
-
-    if value.startswith("spotify:playlist:"):
-        candidate = value.split(":", 2)[2]
-    elif "open.spotify.com" in value:
-        match = re.search(r"playlist/([A-Za-z0-9]+)", value)
-        if not match:
-            raise SpotmvError(f"could not parse playlist id from url: {value}")
-        candidate = match.group(1)
-    else:
-        candidate = value
-
-    candidate = candidate.split("?", 1)[0]
-    if not PLAYLIST_ID_RE.match(candidate):
-        raise SpotmvError(f"invalid playlist id: {value}")
-    return candidate
-
-
-def resolve_playlist(ref: str) -> str:
-    """Resolve an alias name or any playlist reference into a playlist id."""
-    aliases = load_aliases()
-    if ref in aliases:
-        return aliases[ref]
-    try:
-        return parse_playlist_id(ref)
-    except SpotmvError as exc:
-        raise SpotmvError(
-            f"'{ref}' is not a known alias and is not a valid playlist id/url/uri"
-        ) from exc
-
-
-def resolve_target(ref: str) -> str:
-    """Resolve a reference into a playlist id, or the LIKED sentinel for Liked Songs."""
-    if ref.strip().lower() in LIKED_KEYS:
-        return LIKED
-    return resolve_playlist(ref)
 
 
 # --------------------------------------------------------------------------- #
@@ -201,11 +157,6 @@ def playlist_name(sp: spotipy.Spotify, playlist_id: str) -> str:
             raise SpotmvError(f"playlist not found: {playlist_id}") from exc
         raise SpotmvError(f"could not load playlist {playlist_id}: {exc}") from exc
     return data.get("name") or "(unnamed)"
-
-
-def uri_to_id(uri: str) -> str:
-    """spotify:track:<id> -> <id> (passes through a bare id)."""
-    return uri.rsplit(":", 1)[-1]
 
 
 def get_all_saved_tracks(sp: spotipy.Spotify) -> List[Dict[str, Any]]:
