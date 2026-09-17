@@ -23,6 +23,9 @@ except ImportError:
     )
     sys.exit(1)
 
+from .errors import SpotmvError  # noqa: E402  (must follow the import check above)
+from .output import format_duration, render_table  # noqa: E402
+
 
 BATCH_SIZE = 100
 SAVED_BATCH_SIZE = 50
@@ -43,11 +46,6 @@ ALIASES_PATH = CONFIG_DIR / "aliases.json"
 CACHE_PATH = CONFIG_DIR / ".auth-cache"
 
 PLAYLIST_ID_RE = re.compile(r"^[A-Za-z0-9]{22}$")
-
-
-class SpotmvError(Exception):
-    """Raised for expected, user-facing failures."""
-
 
 # --------------------------------------------------------------------------- #
 # Environment / auth
@@ -245,18 +243,6 @@ def uri_to_id(uri: str) -> str:
     return uri.rsplit(":", 1)[-1]
 
 
-def format_duration(ms: int) -> str:
-    """Format milliseconds as e.g. '3h 24m 11s'."""
-    seconds = ms // 1000
-    hours, seconds = divmod(seconds, 3600)
-    minutes, seconds = divmod(seconds, 60)
-    if hours:
-        return f"{hours}h {minutes}m {seconds}s"
-    if minutes:
-        return f"{minutes}m {seconds}s"
-    return f"{seconds}s"
-
-
 def get_all_saved_tracks(sp: spotipy.Spotify) -> List[Dict[str, Any]]:
     """Return every Liked Songs item in order, handling pagination."""
     items: List[Dict[str, Any]] = []
@@ -303,22 +289,6 @@ def remove_all_from_target(sp: spotipy.Spotify, target: str, uris: Sequence[str]
     else:
         for batch in chunked(list(uris), BATCH_SIZE):
             sp.playlist_remove_all_occurrences_of_items(target, batch)
-
-
-# --------------------------------------------------------------------------- #
-# Output helpers
-# --------------------------------------------------------------------------- #
-def render_table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
-    columns = list(zip(*([headers] + [list(r) for r in rows]))) if rows else [[h] for h in headers]
-    widths = [max(len(str(cell)) for cell in col) for col in columns]
-
-    def fmt(row: Sequence[str]) -> str:
-        return "  ".join(str(cell).ljust(widths[i]) for i, cell in enumerate(row))
-
-    line = "  ".join("-" * w for w in widths)
-    out = [fmt(headers), line]
-    out.extend(fmt(row) for row in rows)
-    return "\n".join(out)
 
 
 # --------------------------------------------------------------------------- #
@@ -968,14 +938,6 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _format_seconds(seconds: int) -> str:
-    if seconds >= 3600:
-        return f"{seconds // 3600}h {(seconds % 3600) // 60}m"
-    if seconds >= 60:
-        return f"{seconds // 60}m {seconds % 60}s"
-    return f"{seconds}s"
-
-
 def _handle_rate_limit(exc: spotipy.SpotifyException) -> None:
     headers = getattr(exc, "headers", None) or {}
     retry_after = headers.get("Retry-After") if hasattr(headers, "get") else None
@@ -984,7 +946,7 @@ def _handle_rate_limit(exc: spotipy.SpotifyException) -> None:
         try:
             secs = int(retry_after)
             sys.stderr.write(
-                f"       Spotify asks to wait ~{_format_seconds(secs)} before retrying.\n"
+                f"       Spotify asks to wait ~{format_duration(secs * 1000)} before retrying.\n"
             )
         except ValueError:
             pass
