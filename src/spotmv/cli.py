@@ -4,12 +4,10 @@
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import os
 import re
 import sys
-from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Sequence
 
 try:
@@ -23,7 +21,9 @@ except ImportError:
     )
     sys.exit(1)
 
-from .errors import SpotmvError  # noqa: E402  (must follow the import check above)
+from . import config  # noqa: E402  (must follow the import check above)
+from .config import load_aliases, load_env_file, save_aliases  # noqa: E402
+from .errors import SpotmvError  # noqa: E402
 from .output import format_duration, render_table  # noqa: E402
 
 
@@ -41,29 +41,11 @@ SCOPES = (
 LIKED = "liked"
 LIKED_KEYS = {"liked", "liked-songs", "liked_songs", "saved"}
 
-CONFIG_DIR = Path(os.environ.get("SPOTMV_CONFIG_DIR", Path.home() / ".config" / "spotmv"))
-ALIASES_PATH = CONFIG_DIR / "aliases.json"
-CACHE_PATH = CONFIG_DIR / ".auth-cache"
-
 PLAYLIST_ID_RE = re.compile(r"^[A-Za-z0-9]{22}$")
 
 # --------------------------------------------------------------------------- #
 # Environment / auth
 # --------------------------------------------------------------------------- #
-def load_env_file(path: Path = Path(".env")) -> None:
-    """Load simple KEY=VALUE pairs from a local .env file, if present."""
-    if not path.is_file():
-        return
-    for raw in path.read_text().splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        key = key.strip()
-        value = value.strip().strip('"').strip("'")
-        os.environ.setdefault(key, value)
-
-
 def get_client() -> spotipy.Spotify:
     """Build an authenticated Spotify client from environment variables."""
     logging.getLogger("spotipy").setLevel(logging.CRITICAL)
@@ -81,11 +63,11 @@ def get_client() -> spotipy.Spotify:
             + "\nset them in your shell or in a local .env file (see .env.example)."
         )
 
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    config.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     try:
         auth = SpotifyOAuth(
             scope=SCOPES,
-            cache_path=str(CACHE_PATH),
+            cache_path=str(config.CACHE_PATH),
             open_browser=True,
         )
         # retries=0 so we fail fast on HTTP 429 instead of letting spotipy sleep
@@ -122,23 +104,6 @@ def parse_playlist_id(value: str) -> str:
     if not PLAYLIST_ID_RE.match(candidate):
         raise SpotmvError(f"invalid playlist id: {value}")
     return candidate
-
-
-def load_aliases() -> Dict[str, str]:
-    if not ALIASES_PATH.is_file():
-        return {}
-    try:
-        data = json.loads(ALIASES_PATH.read_text())
-    except json.JSONDecodeError as exc:
-        raise SpotmvError(f"alias file is corrupt ({ALIASES_PATH}): {exc}") from exc
-    if not isinstance(data, dict):
-        raise SpotmvError(f"alias file has unexpected format: {ALIASES_PATH}")
-    return {str(k): str(v) for k, v in data.items()}
-
-
-def save_aliases(aliases: Dict[str, str]) -> None:
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    ALIASES_PATH.write_text(json.dumps(aliases, indent=2, sort_keys=True) + "\n")
 
 
 def resolve_playlist(ref: str) -> str:
