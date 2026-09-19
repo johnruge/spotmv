@@ -4,15 +4,12 @@
 from __future__ import annotations
 
 import argparse
-import logging
-import os
 import sys
 from typing import Any, Dict, List, Optional, Sequence
 
 try:
     import requests
     import spotipy
-    from spotipy.oauth2 import SpotifyOAuth
 except ImportError:
     sys.stderr.write(
         "error: the 'spotipy' package is required.\n"
@@ -20,20 +17,18 @@ except ImportError:
     )
     sys.exit(1)
 
-from . import config  # noqa: E402  (must follow the import check above)
+# must follow the import check above, hence the noqa: E402s
 from .api import (  # noqa: E402
-    BATCH_SIZE,
-    SAVED_BATCH_SIZE,
     chunked,
     get_all_playlist_items,
     get_all_playlists,
-    get_all_saved_tracks,
     is_usable_track,
     item_track,
     playlist_name,
     track_artist_names,
 )
-from .config import load_aliases, load_env_file, save_aliases  # noqa: E402
+from .auth import get_client  # noqa: E402
+from .config import load_aliases, save_aliases  # noqa: E402
 from .errors import SpotmvError  # noqa: E402
 from .output import format_duration, render_table  # noqa: E402
 from .refs import (  # noqa: E402
@@ -42,89 +37,13 @@ from .refs import (  # noqa: E402
     parse_playlist_id,
     resolve_playlist,
     resolve_target,
-    uri_to_id,
 )
-
-
-SCOPES = (
-    "playlist-read-private "
-    "playlist-read-collaborative "
-    "playlist-modify-public "
-    "playlist-modify-private "
-    "user-library-read "
-    "user-library-modify"
+from .targets import (  # noqa: E402
+    add_to_target,
+    get_all_target_items,
+    remove_all_from_target,
+    target_name,
 )
-# --------------------------------------------------------------------------- #
-# Environment / auth
-# --------------------------------------------------------------------------- #
-def get_client() -> spotipy.Spotify:
-    """Build an authenticated Spotify client from environment variables."""
-    logging.getLogger("spotipy").setLevel(logging.CRITICAL)
-    load_env_file()
-
-    missing = [
-        name
-        for name in ("SPOTIPY_CLIENT_ID", "SPOTIPY_CLIENT_SECRET", "SPOTIPY_REDIRECT_URI")
-        if not os.environ.get(name)
-    ]
-    if missing:
-        raise SpotmvError(
-            "missing environment variables: "
-            + ", ".join(missing)
-            + "\nset them in your shell or in a local .env file (see .env.example)."
-        )
-
-    config.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    try:
-        auth = SpotifyOAuth(
-            scope=SCOPES,
-            cache_path=str(config.CACHE_PATH),
-            open_browser=True,
-        )
-        # retries=0 so we fail fast on HTTP 429 instead of letting spotipy sleep
-        # for the (sometimes enormous) Retry-After interval.
-        client = spotipy.Spotify(auth_manager=auth, requests_timeout=30, retries=0)
-        client.current_user()
-        return client
-    except spotipy.SpotifyOauthError as exc:
-        raise SpotmvError(f"authentication failed: {exc}") from exc
-    except spotipy.SpotifyException as exc:
-        raise SpotmvError(f"could not authenticate with Spotify: {exc}") from exc
-
-
-# --------------------------------------------------------------------------- #
-# Target abstraction: a target is a playlist id or the LIKED sentinel
-# --------------------------------------------------------------------------- #
-def target_name(sp: spotipy.Spotify, target: str) -> str:
-    if target == LIKED:
-        return "Liked Songs"
-    return playlist_name(sp, target)
-
-
-def get_all_target_items(sp: spotipy.Spotify, target: str) -> List[Dict[str, Any]]:
-    if target == LIKED:
-        return get_all_saved_tracks(sp)
-    return get_all_playlist_items(sp, target)
-
-
-def add_to_target(sp: spotipy.Spotify, target: str, uris: Sequence[str]) -> None:
-    if target == LIKED:
-        ids = [uri_to_id(u) for u in uris]
-        for batch in chunked(ids, SAVED_BATCH_SIZE):
-            sp.current_user_saved_tracks_add(batch)
-    else:
-        for batch in chunked(list(uris), BATCH_SIZE):
-            sp.playlist_add_items(target, batch)
-
-
-def remove_all_from_target(sp: spotipy.Spotify, target: str, uris: Sequence[str]) -> None:
-    if target == LIKED:
-        ids = [uri_to_id(u) for u in uris]
-        for batch in chunked(ids, SAVED_BATCH_SIZE):
-            sp.current_user_saved_tracks_delete(batch)
-    else:
-        for batch in chunked(list(uris), BATCH_SIZE):
-            sp.playlist_remove_all_occurrences_of_items(target, batch)
 
 
 # --------------------------------------------------------------------------- #
