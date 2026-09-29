@@ -9,6 +9,7 @@ import spotipy
 
 from ..api import is_usable_track, item_track, track_artist_names
 from ..errors import SpotmvError
+from ..output import add_json_flag, emit
 from ..refs import resolve_target
 from ..targets import get_all_target_items, target_name
 
@@ -19,6 +20,7 @@ def register(sub: argparse._SubParsersAction) -> argparse.ArgumentParser:
     diff = sub.add_parser("diff", help="show which tracks two playlists do and don't share")
     diff.add_argument("a", help="playlist, alias, or 'liked'")
     diff.add_argument("b", help="playlist, alias, or 'liked'")
+    add_json_flag(diff)
     return diff
 
 
@@ -49,18 +51,31 @@ def run(sp: spotipy.Spotify, args: argparse.Namespace) -> int:
     only_b = [t for uri, t in b_tracks.items() if uri not in a_tracks]
     shared = len(a_tracks) - len(only_a)
 
-    print(f"A: {a_name} ({len(a_tracks)} unique tracks)")
-    print(f"B: {b_name} ({len(b_tracks)} unique tracks)")
-    print()
-    print(f"  In both:     {shared}")
-    print(f"  Only in A:   {len(only_a)}")
-    print(f"  Only in B:   {len(only_b)}")
-    for heading, tracks in ((f"Only in {a_name}", only_a), (f"Only in {b_name}", only_b)):
-        if not tracks:
-            continue
-        print(f"\n{heading}:")
-        for i, track in enumerate(tracks[:PREVIEW], start=1):
-            print(f"  {i:>3}. {label(track)}")
-        if len(tracks) > PREVIEW:
-            print(f"  ... and {len(tracks) - PREVIEW} more")
+    def render() -> None:
+        print(f"A: {a_name} ({len(a_tracks)} unique tracks)")
+        print(f"B: {b_name} ({len(b_tracks)} unique tracks)")
+        print()
+        print(f"  In both:     {shared}")
+        print(f"  Only in A:   {len(only_a)}")
+        print(f"  Only in B:   {len(only_b)}")
+        for heading, tracks in ((f"Only in {a_name}", only_a), (f"Only in {b_name}", only_b)):
+            if not tracks:
+                continue
+            print(f"\n{heading}:")
+            for i, track in enumerate(tracks[:PREVIEW], start=1):
+                print(f"  {i:>3}. {label(track)}")
+            if len(tracks) > PREVIEW:
+                print(f"  ... and {len(tracks) - PREVIEW} more")
+
+    def as_json(track: Dict[str, Any]) -> Dict[str, Any]:
+        return {"title": track.get("name") or "(unknown)", "artists": track_artist_names(track), "uri": track["uri"]}
+
+    data = {
+        "a": {"name": a_name, "unique_tracks": len(a_tracks)},
+        "b": {"name": b_name, "unique_tracks": len(b_tracks)},
+        "in_both": shared,
+        "only_in_a": [as_json(t) for t in only_a],  # full lists, not the text preview
+        "only_in_b": [as_json(t) for t in only_b],
+    }
+    emit(args, data, render)
     return 0
