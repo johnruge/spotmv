@@ -28,7 +28,7 @@ from .api import (  # noqa: E402
     track_artist_names,
 )
 from .auth import get_client  # noqa: E402
-from .commands import alias, info, ls, tracks  # noqa: E402
+from .commands import alias, info, ls, rename, tracks  # noqa: E402
 from .errors import SpotmvError  # noqa: E402
 from .output import format_duration  # noqa: E402
 from .refs import (  # noqa: E402
@@ -394,29 +394,6 @@ def cmd_sort(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_rename(args: argparse.Namespace) -> int:
-    new_name = args.name.strip()
-    if not new_name:
-        raise SpotmvError("new playlist name cannot be empty")
-    if args.playlist.strip().lower() in LIKED_KEYS:
-        raise SpotmvError("Liked Songs cannot be renamed (it is not a playlist)")
-
-    sp = get_client()
-    playlist_id = resolve_playlist(args.playlist)
-    old_name = playlist_name(sp, playlist_id)
-    try:
-        sp.playlist_change_details(playlist_id, name=new_name)
-    except spotipy.SpotifyException as exc:
-        if getattr(exc, "http_status", None) == 403:
-            raise SpotmvError(
-                f"not allowed to rename this playlist (you may not be the owner): {old_name}"
-            ) from exc
-        raise SpotmvError(f"could not rename playlist: {exc}") from exc
-
-    print(f"renamed '{old_name}' -> '{new_name}'")
-    return 0
-
-
 def cmd_describe(args: argparse.Namespace) -> int:
     if args.playlist.strip().lower() in LIKED_KEYS:
         raise SpotmvError("Liked Songs has no editable description (it is not a playlist)")
@@ -493,10 +470,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     collect.set_defaults(func=cmd_collect_artist)
 
-    rename = sub.add_parser("rename", help="change a playlist's name")
-    rename.add_argument("playlist", help="playlist or alias")
-    rename.add_argument("name", help="the new playlist name")
-    rename.set_defaults(func=cmd_rename)
+    rename.register(sub).set_defaults(handler=rename)
 
     tracks.register(sub).set_defaults(handler=tracks)
 
