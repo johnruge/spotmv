@@ -6,8 +6,7 @@ import argparse
 
 import spotipy
 
-from ..api import track_artist_names
-from ..planning import run_move
+from ..planning import by_artist, run_move
 
 
 def register(sub: argparse._SubParsersAction) -> argparse.ArgumentParser:
@@ -27,9 +26,4 @@ def register(sub: argparse._SubParsersAction) -> argparse.ArgumentParser:
 
 def run(sp: spotipy.Spotify, args: argparse.Namespace) -> int:
     artist = args.artist.strip()
-    artist_key = artist.lower()
-
-    def by_artist(track) -> bool:
-        return any(name.lower() == artist_key for name in track_artist_names(track))
-
-    return run_move(sp, args, matches=by_artist, found_label=f"Tracks by {artist} found")
+    return run_move(sp, args, matches=by_artist(artist), found_label=f"Tracks by {artist} found")

@@ -3,21 +3,14 @@
 from __future__ import annotations
 
 import argparse
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 import spotipy
 
-from ..api import (
-    chunked,
-    get_all_playlist_items,
-    get_all_playlists,
-    is_usable_track,
-    item_track,
-    playlist_name,
-    track_artist_names,
-)
+from ..api import get_all_playlist_items, get_all_playlists, playlist_name
+from ..planning import MovePlan, by_artist, plan_move
 from ..refs import resolve_playlist
-
+from ..targets import add_to_target, remove_all_from_target
 
 def register(sub: argparse._SubParsersAction) -> argparse.ArgumentParser:
     collect = sub.add_parser(
@@ -35,7 +28,7 @@ def register(sub: argparse._SubParsersAction) -> argparse.ArgumentParser:
 def run(sp: spotipy.Spotify, args: argparse.Namespace) -> int:
     dest_id = resolve_playlist(args.dest)
     artist = args.artist.strip()
-    artist_key = artist.lower()
+    matches = by_artist(artist)
 
     me_id = sp.current_user().get("id")
     owned = [
@@ -46,66 +39,36 @@ def run(sp: spotipy.Spotify, args: argparse.Namespace) -> int:
 
     dest_name = playlist_name(sp, dest_id)
     dest_items = get_all_playlist_items(sp, dest_id)
-    dest_total = len(dest_items)
-    dest_uris = {
-        item_track(item)["uri"] for item in dest_items if is_usable_track(item)
-    }
 
-    sources: List[Dict[str, Any]] = []
-    total_occurrences = 0
-    collected_order: List[str] = []
-    collected_seen: set[str] = set()
-
+    # one plan per source playlist (what to remove from it), and one overall
+    # plan across all of them (what the destination is missing)
+    sources: List[Tuple[str, str, MovePlan]] = []
+    matching_items: List[Dict[str, Any]] = []
     for pl in owned:
-        pid = pl.get("id")
-        occurrences = 0
-        uris_here: List[str] = []
-        seen_here: set[str] = set()
-        for item in get_all_playlist_items(sp, pid):
-            if not is_usable_track(item):
-                continue
-            track = item_track(item)
-            if any(name.lower() == artist_key for name in track_artist_names(track)):
-                occurrences += 1
-                uri = track["uri"]
-                if uri not in seen_here:
-                    seen_here.add(uri)
-                    uris_here.append(uri)
-                if uri not in collected_seen:
-                    collected_seen.add(uri)
-                    collected_order.append(uri)
-        if occurrences:
-            sources.append(
-                {
-                    "name": pl.get("name") or "(unnamed)",
-                    "id": pid,
-                    "occurrences": occurrences,
-                    "uris": uris_here,
-                }
-            )
-            total_occurrences += occurrences
-
-    already_in_dest = sum(1 for uri in collected_order if uri in dest_uris)
-    to_add = [uri for uri in collected_order if uri not in dest_uris]
-    predicted_dest = dest_total + len(to_add)
+        items = get_all_playlist_items(sp, pl.get("id"))
+        plan = plan_move(items, [], matches)
+        if plan.occurrences:
+            sources.append((pl.get("name") or "(unnamed)", pl.get("id"), plan))
+            matching_items.extend(items)
+    overall = plan_move(matching_items, dest_items, matches)
 
     def print_summary() -> None:
         print(f"Artist: {artist}")
-        print(f"Destination: {dest_name} (current count: {dest_total})")
+        print(f"Destination: {dest_name} (current count: {overall.dest_total})")
         print(
             f"Scanned {len(owned)} owned playlist(s); "
             f"{len(sources)} with matching tracks.\n"
         )
-        for src in sources:
-            print(f"  {src['name']}: found {src['occurrences']}, "
-                  f"would remove {src['occurrences']}")
+        for name, _, plan in sources:
+            print(f"  {name}: found {plan.occurrences}, "
+                  f"would remove {plan.occurrences}")
         if sources:
             print()
-        print(f"  Total matching occurrences across sources: {total_occurrences}")
-        print(f"  Unique tracks: {len(collected_order)}")
-        print(f"  Already in destination: {already_in_dest}")
-        print(f"  Would add to destination: {len(to_add)}")
-        print(f"  Predicted destination count: {predicted_dest}")
+        print(f"  Total matching occurrences across sources: {overall.occurrences}")
+        print(f"  Unique tracks: {len(overall.uris)}")
+        print(f"  Already in destination: {overall.already_in_dest}")
+        print(f"  Would add to destination: {len(overall.to_add)}")
+        print(f"  Predicted destination count: {overall.predicted_dest}")
 
     if not args.apply:
         print("DRY RUN: no changes made\n")
@@ -115,21 +78,16 @@ def run(sp: spotipy.Spotify, args: argparse.Namespace) -> int:
     print_summary()
     print()
 
-    if not collected_order:
+    if not overall.uris:
         print("nothing to move.")
         return 0
 
-    if to_add:
-        for batch in chunked(to_add):
-            sp.playlist_add_items(dest_id, batch)
-
-    removed_total = 0
-    for src in sources:
-        for batch in chunked(src["uris"]):
-            sp.playlist_remove_all_occurrences_of_items(src["id"], batch)
-        removed_total += src["occurrences"]
+    if overall.to_add:
+        add_to_target(sp, dest_id, overall.to_add)
+    for _, source_id, plan in sources:
+        remove_all_from_target(sp, source_id, plan.uris)
 
     print("DONE")
-    print(f"  Added {len(to_add)} track(s) to {dest_name}.")
-    print(f"  Removed {removed_total} track(s) across {len(sources)} playlist(s).")
+    print(f"  Added {len(overall.to_add)} track(s) to {dest_name}.")
+    print(f"  Removed {overall.occurrences} track(s) across {len(sources)} playlist(s).")
     return 0

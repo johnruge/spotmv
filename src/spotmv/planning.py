@@ -14,7 +14,7 @@ from typing import Any, Callable, Dict, List, Sequence
 
 import spotipy
 
-from .api import is_usable_track, item_track
+from .api import is_usable_track, item_track, track_artist_names
 from .errors import SpotmvError
 from .refs import resolve_target
 from .targets import add_to_target, get_all_target_items, remove_all_from_target, target_name
@@ -41,6 +41,12 @@ class MovePlan:
     @property
     def predicted_dest(self) -> int:
         return self.dest_total + len(self.to_add)
+
+
+def by_artist(artist: str) -> Callable[[Track], bool]:
+    """Match tracks crediting `artist` anywhere in their artist list, case-insensitively."""
+    key = artist.strip().lower()
+    return lambda track: any(name.lower() == key for name in track_artist_names(track))
 
 
 def plan_move(
