@@ -28,11 +28,10 @@ from .api import (  # noqa: E402
     track_artist_names,
 )
 from .auth import get_client  # noqa: E402
-from .commands import alias, ls, tracks  # noqa: E402
+from .commands import alias, info, ls, tracks  # noqa: E402
 from .errors import SpotmvError  # noqa: E402
 from .output import format_duration  # noqa: E402
 from .refs import (  # noqa: E402
-    LIKED,
     LIKED_KEYS,
     resolve_playlist,
     resolve_target,
@@ -395,55 +394,6 @@ def cmd_sort(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_info(args: argparse.Namespace) -> int:
-    sp = get_client()
-    target = resolve_target(args.playlist)
-    items = get_all_target_items(sp, target)
-
-    total_ms = sum(
-        ((item_track(item) or {}).get("duration_ms") or 0) for item in items
-    )
-    playable = sum(1 for item in items if is_usable_track(item))
-
-    if target == LIKED:
-        print("Liked Songs")
-        print(f"  Tracks:       {len(items)}")
-        print(f"  Total length: {format_duration(total_ms)}")
-        return 0
-
-    data = sp.playlist(
-        target,
-        fields=(
-            "name,description,public,collaborative,id,"
-            "owner.display_name,owner.id,followers.total,external_urls.spotify"
-        ),
-    )
-    me_id = sp.current_user().get("id")
-    owner = data.get("owner") or {}
-    owned = owner.get("id") == me_id
-
-    visibility = "public" if data.get("public") else "private"
-    if data.get("collaborative"):
-        visibility += ", collaborative"
-
-    print(f"Playlist: {data.get('name') or '(unnamed)'}")
-    print(f"  ID:           {data.get('id') or target}")
-    owner_label = owner.get("display_name") or owner.get("id") or "?"
-    print(f"  Owner:        {owner_label}{' (you)' if owned else ''}")
-    print(f"  Visibility:   {visibility}")
-    if data.get("description"):
-        print(f"  Description:  {data['description']}")
-    print(f"  Followers:    {(data.get('followers') or {}).get('total', 0)}")
-    print(f"  Tracks:       {len(items)}")
-    if playable != len(items):
-        print(f"  Playable:     {playable}")
-    print(f"  Total length: {format_duration(total_ms)}")
-    url = (data.get("external_urls") or {}).get("spotify")
-    if url:
-        print(f"  URL:          {url}")
-    return 0
-
-
 def cmd_rename(args: argparse.Namespace) -> int:
     new_name = args.name.strip()
     if not new_name:
@@ -574,9 +524,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     srt.set_defaults(func=cmd_sort)
 
-    info = sub.add_parser("info", help="show details about a playlist")
-    info.add_argument("playlist", help="playlist, alias, or 'liked'")
-    info.set_defaults(func=cmd_info)
+    info.register(sub).set_defaults(handler=info)
 
     describe = sub.add_parser("describe", help="set a playlist's description")
     describe.add_argument("playlist", help="playlist or alias")
