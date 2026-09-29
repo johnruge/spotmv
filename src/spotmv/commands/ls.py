@@ -7,31 +7,35 @@ import argparse
 import spotipy
 
 from ..api import get_all_playlists
-from ..output import render_table
+from ..output import add_json_flag, emit, render_table
 
 
 def register(sub: argparse._SubParsersAction) -> argparse.ArgumentParser:
-    return sub.add_parser("ls", help="list playlists accessible to you")
+    ls = sub.add_parser("ls", help="list playlists accessible to you")
+    add_json_flag(ls)
+    return ls
 
 
 def run(sp: spotipy.Spotify, args: argparse.Namespace) -> int:
     me_id = sp.current_user().get("id")
     playlists = get_all_playlists(sp)
 
-    rows = []
+    data = []
     for pl in playlists:
         owner = pl.get("owner") or {}
-        owned = owner.get("id") == me_id
-        rows.append(
-            [
-                pl.get("name") or "(unnamed)",
-                pl.get("id") or "",
-                owner.get("display_name") or owner.get("id") or "",
-                "yes" if owned else "no",
-            ]
+        data.append(
+            {
+                "name": pl.get("name") or "(unnamed)",
+                "id": pl.get("id") or "",
+                "owner": owner.get("display_name") or owner.get("id") or "",
+                "owned": owner.get("id") == me_id,
+            }
         )
 
-    headers = ["NAME", "ID", "OWNER", "OWNED"]
-    print(render_table(headers, rows))
-    print(f"\n{len(rows)} playlist(s) (use 'spotmv info <playlist>' for track counts)")
+    def render() -> None:
+        rows = [[d["name"], d["id"], d["owner"], "yes" if d["owned"] else "no"] for d in data]
+        print(render_table(["NAME", "ID", "OWNER", "OWNED"], rows))
+        print(f"\n{len(rows)} playlist(s) (use 'spotmv info <playlist>' for track counts)")
+
+    emit(args, data, render)
     return 0

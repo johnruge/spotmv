@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Sequence
+import argparse
+import json
+from typing import Any, Callable, Sequence
 
 
 def render_table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
@@ -29,3 +31,17 @@ def format_duration(ms: int) -> str:
     if minutes:
         return f"{minutes}m {seconds}s"
     return f"{seconds}s"
+
+
+def add_json_flag(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--json", action="store_true", help="print machine-readable JSON instead of text"
+    )
+
+
+def emit(args: argparse.Namespace, data: Any, render: Callable[[], None]) -> None:
+    """Print `data` as JSON if --json was given, otherwise call `render` for the text."""
+    if getattr(args, "json", False):
+        print(json.dumps(data, indent=2, ensure_ascii=False))
+    else:
+        render()
