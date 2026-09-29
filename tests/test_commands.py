@@ -11,7 +11,7 @@ import json
 
 import pytest
 
-from fakes import FakeSpotify, make_item, make_playlist, make_track
+from fakes import FakeSpotify, make_item, make_playlist, make_track, spotify_error
 from spotmv.backups import backups_dir, make_snapshot
 from spotmv.planning import by_artist, plan_move
 from spotmv.refs import uri_to_id
@@ -90,6 +90,24 @@ def test_apply_writes_to_the_right_places(cli_module, sp, argv, expected):
     assert cli_module.main(argv + ["--apply"]) == 0
     assert sp.writes == expected
 
+
+
+def test_failed_sort_can_be_undone_with_its_backup(cli_module, sp, capsys):
+    """sort writes 100 tracks, then appends; if the append fails the playlist is
+    left truncated. The error must name a backup that restores it exactly."""
+    original = items(*[make_track(f"t{i:03}") for i in range(150)])
+    sp.items[GYM["id"]] = original
+    sp.fail_on("playlist_add_items", spotify_error("rate limited", status=429))
+
+    assert cli_module.main(["sort", GYM["id"], "--by", "title", "--descending", "--apply"]) == 1
+    backup = capsys.readouterr().err.split("spotmv restore ")[1].split()[0]
+
+    # what Spotify now holds: only the first 100 of the new order
+    sp.items[GYM["id"]] = [make_item(make_track(u, uri=u)) for u in sp.writes[0][2]]
+    sp.calls.clear()
+    assert cli_module.main(["restore", backup, "--apply"]) == 0
+    restored = [uri for call in sp.writes for uri in call[-1]]
+    assert restored == [item["track"]["uri"] for item in original]
 
 def test_plan_counts_every_copy_but_moves_each_track_once():
     plan = plan_move(items(NAS, OTHER, NAS) + [LOCAL] + items(FEAT), [], by_artist(" NAS "))

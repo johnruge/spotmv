@@ -7,9 +7,11 @@ from typing import Any, Dict
 
 import spotipy
 
-from ..api import chunked, get_all_playlist_items, item_track, playlist_name, track_artist_names
+from ..api import get_all_playlist_items, item_track, playlist_name, track_artist_names
+from ..backups import make_snapshot, save_snapshot
 from ..errors import SpotmvError
 from ..refs import LIKED_KEYS, resolve_playlist
+from ..targets import replace_playlist_items
 
 SORT_KEYS = ("release", "added", "duration", "title", "artist")
 DEFAULT_DESCENDING = {"release", "added"}
@@ -118,18 +120,26 @@ def run(sp: spotipy.Spotify, args: argparse.Namespace) -> int:
     print_summary()
     print()
 
+    # Reordering replaces the whole playlist in several calls, and a failure
+    # between them (a 429, say) would leave it truncated -- so save the
+    # current order first.
+    backup = save_snapshot(make_snapshot(playlist_id, name, items))
+
     new_uris = [item_track(item)["uri"] for item in ordered]
     try:
-        sp.playlist_replace_items(playlist_id, new_uris[:100])
-        for batch in chunked(new_uris[100:]):
-            sp.playlist_add_items(playlist_id, batch)
+        replace_playlist_items(sp, playlist_id, new_uris)
     except spotipy.SpotifyException as exc:
         if getattr(exc, "http_status", None) == 403:
             raise SpotmvError(
                 f"not allowed to modify this playlist (you may not be the owner): {name}"
             ) from exc
-        raise SpotmvError(f"could not reorder playlist: {exc}") from exc
+        raise SpotmvError(
+            f"could not reorder playlist: {exc}\n"
+            "the playlist may now be incomplete. put it back with:\n"
+            f"  spotmv restore {backup.name} --apply"
+        ) from exc
 
     print("DONE")
     print(f"  Reordered {len(new_uris)} track(s) in {name} by {args.by} ({direction}).")
+    print(f"  Previous order backed up to {backup.name}")
     return 0

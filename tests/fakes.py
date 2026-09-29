@@ -83,6 +83,11 @@ class FakeSpotify:
         self.page_size = page_size
         self.calls: List[tuple] = []
         self._pages: Dict[str, Dict[str, Any]] = {}
+        self._fail: Dict[str, BaseException] = {}
+
+    def fail_on(self, method: str, exc: BaseException) -> None:
+        """Make the next call to `method` raise `exc` (after it's recorded)."""
+        self._fail[method] = exc
 
     @property
     def writes(self) -> List[tuple]:
@@ -91,6 +96,8 @@ class FakeSpotify:
 
     def _record(self, method: str, *args: Any) -> None:
         self.calls.append((method,) + args)
+        if method in self._fail:
+            raise self._fail.pop(method)
 
     def _page(self, label: str, rows: Sequence[Dict[str, Any]], size: int) -> Dict[str, Any]:
         size = max(1, size)
