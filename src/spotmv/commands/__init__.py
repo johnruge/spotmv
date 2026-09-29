@@ -13,6 +13,7 @@ Adding a command is one new module here plus one entry in COMMANDS.
 
 from . import (
     alias,
+    backup,
     collect_artist,
     describe,
     info,
@@ -36,4 +37,5 @@ COMMANDS = [
     sort,
     info,
     describe,
+    backup,
 ]
