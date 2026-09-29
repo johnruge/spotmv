@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""spotmv - a small local CLI for managing Spotify playlists."""
+"""spotmv - a small local CLI for managing Spotify playlists.
+
+This module is only the dispatcher: it builds the parser from commands/,
+logs in when a command needs it, and turns failures into readable errors.
+"""
 
 from __future__ import annotations
 
@@ -19,44 +23,19 @@ except ImportError:
 
 # must follow the import check above, hence the noqa: E402s
 from .auth import get_client  # noqa: E402
-from .commands import alias, collect_artist, describe, info, ls, move_all, move_artist, rename, sort, tracks  # noqa: E402
+from .commands import COMMANDS  # noqa: E402
 from .errors import SpotmvError  # noqa: E402
 from .output import format_duration  # noqa: E402
 
 
-# --------------------------------------------------------------------------- #
-# Commands
-# --------------------------------------------------------------------------- #
-# --------------------------------------------------------------------------- #
-# CLI wiring
-# --------------------------------------------------------------------------- #
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="spotmv",
         description="Manage Spotify playlists from the command line.",
     )
     sub = parser.add_subparsers(dest="command", required=True)
-
-    ls.register(sub).set_defaults(handler=ls)
-
-    alias.register(sub).set_defaults(handler=alias)
-
-    move_artist.register(sub).set_defaults(handler=move_artist)
-
-    move_all.register(sub).set_defaults(handler=move_all)
-
-    collect_artist.register(sub).set_defaults(handler=collect_artist)
-
-    rename.register(sub).set_defaults(handler=rename)
-
-    tracks.register(sub).set_defaults(handler=tracks)
-
-    sort.register(sub).set_defaults(handler=sort)
-
-    info.register(sub).set_defaults(handler=info)
-
-    describe.register(sub).set_defaults(handler=describe)
-
+    for command in COMMANDS:
+        command.register(sub).set_defaults(handler=command)
     return parser
 
 
@@ -82,11 +61,8 @@ def _handle_rate_limit(exc: spotipy.SpotifyException) -> None:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    command = args.handler
     try:
-        command = getattr(args, "handler", None)
-        if command is None:
-            # not yet moved into commands/ -- this branch goes away once all are
-            return args.func(args)
         # validate before logging in, so bad input fails fast and offline
         validate = getattr(command, "validate", None)
         if validate is not None:
