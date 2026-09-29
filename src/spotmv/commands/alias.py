@@ -9,7 +9,7 @@ import spotipy
 
 from ..config import load_aliases, save_aliases
 from ..errors import SpotmvError
-from ..output import render_table
+from ..output import add_json_flag, emit, render_table
 from ..refs import parse_playlist_id, resolve_playlist
 
 # aliases live in a local file; no Spotify login needed
@@ -24,7 +24,7 @@ def register(sub: argparse._SubParsersAction) -> argparse.ArgumentParser:
     p_add.add_argument("target", help="playlist id, url, or spotify:playlist: uri")
     p_rm = alias_sub.add_parser("rm", help="remove an alias")
     p_rm.add_argument("name")
-    alias_sub.add_parser("ls", help="list aliases")
+    add_json_flag(alias_sub.add_parser("ls", help="list aliases"))
     p_res = alias_sub.add_parser("resolve", help="print the id an alias resolves to")
     p_res.add_argument("name")
     return alias
@@ -49,11 +49,14 @@ def run(sp: Optional[spotipy.Spotify], args: argparse.Namespace) -> int:
         return 0
 
     if args.alias_cmd == "ls":
-        if not aliases:
-            print("no aliases defined")
-            return 0
-        rows = [[name, pid] for name, pid in sorted(aliases.items())]
-        print(render_table(["ALIAS", "PLAYLIST ID"], rows))
+        def render() -> None:
+            if not aliases:
+                print("no aliases defined")
+                return
+            rows = [[name, pid] for name, pid in sorted(aliases.items())]
+            print(render_table(["ALIAS", "PLAYLIST ID"], rows))
+
+        emit(args, dict(sorted(aliases.items())), render)
         return 0
 
     if args.alias_cmd == "resolve":
