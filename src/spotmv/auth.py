@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 
+import requests
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 
@@ -46,9 +47,15 @@ def get_client() -> spotipy.Spotify:
             cache_path=str(config.CACHE_PATH),
             open_browser=True,
         )
-        # retries=0 so we fail fast on HTTP 429 instead of letting spotipy sleep
-        # for the (sometimes enormous) Retry-After interval.
-        client = spotipy.Spotify(auth_manager=auth, requests_timeout=30, retries=0)
+        # A plain session: no automatic retries, so a 429 fails fast instead of
+        # sleeping through a Retry-After that can be many hours, and the error
+        # arrives as a normal HTTP error carrying Spotify's Retry-After header
+        # and reason. (spotipy's own retry session replaces a 429 with a bare
+        # "Max Retries" error with the headers dropped -- and reports every 5xx
+        # as a 429 too.)
+        client = spotipy.Spotify(
+            auth_manager=auth, requests_session=requests.Session(), requests_timeout=30
+        )
         client.current_user()
         return client
     except spotipy.SpotifyOauthError as exc:
