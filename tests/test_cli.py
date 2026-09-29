@@ -14,7 +14,7 @@ from conftest import find_subparsers
 COMMANDS = [
     "ls", "alias", "move-artist", "move-all", "collect-artist",
     "rename", "tracks", "sort", "info", "describe",
-    "backup", "backups", "restore", "find",
+    "backup", "backups", "restore", "find", "dupes",
 ]
 
 # every command that can change something on Spotify
@@ -24,6 +24,7 @@ DESTRUCTIVE = [
     ["collect-artist", "--dest", "b", "--artist", "c"],
     ["sort", "gym", "--by", "title"],
     ["restore", "some-backup.json"],
+    ["dupes", "gym"],
 ]
 
 
