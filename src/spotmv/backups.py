@@ -10,10 +10,11 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List, Sequence, Tuple
 
 from . import config
 from .api import item_track, track_artist_names
+from .errors import SpotmvError
 
 FORMAT_VERSION = 1
 
@@ -65,3 +66,24 @@ def save_snapshot(snapshot: Dict[str, Any]) -> Path:
 def list_snapshots() -> List[Path]:
     directory = backups_dir()
     return sorted(directory.glob("*.json")) if directory.is_dir() else []
+
+
+def load_snapshot(ref: str) -> Tuple[Path, Dict[str, Any]]:
+    """Load a snapshot by path, or by bare file name inside the backups dir."""
+    path = Path(ref).expanduser()
+    if not path.is_file() and (backups_dir() / ref).is_file():
+        path = backups_dir() / ref
+    if not path.is_file():
+        raise SpotmvError(f"no such backup: {ref}")
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError) as exc:
+        raise SpotmvError(f"could not read backup {path}: {exc}") from exc
+    if not (
+        isinstance(data, dict)
+        and data.get("version") == FORMAT_VERSION
+        and isinstance(data.get("playlist_id"), str)
+        and isinstance(data.get("tracks"), list)
+    ):
+        raise SpotmvError(f"not a spotmv backup: {path}")
+    return path, data
