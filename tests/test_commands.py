@@ -85,9 +85,12 @@ def test_dry_run_writes_nothing(cli_module, sp, capsys, argv):
             ["restore", "gym.json"],
             [("playlist_replace_items", GYM["id"], [OTHER["uri"], NAS["uri"]])],
         ),
-        (  # gym is NAS, OTHER, NAS: only the copy at position 2 goes
+        (  # gym is NAS, OTHER, NAS: take NAS out, put one copy back at index 0
             ["dupes", GYM["id"]],
-            [("playlist_remove_specific_occurrences_of_items", GYM["id"], [{"uri": NAS["uri"], "positions": [2]}])],
+            [
+                ("playlist_remove_all_occurrences_of_items", GYM["id"], [NAS["uri"]]),
+                ("playlist_add_items", GYM["id"], [NAS["uri"]], 0),
+            ],
         ),
         (  # like move-artist, but nothing leaves the source
             ["copy", "--source", GYM["id"], "--dest", CHILL["id"], "--artist", "nas"],

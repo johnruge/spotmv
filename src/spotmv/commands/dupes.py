@@ -7,10 +7,11 @@ from typing import Dict, List, Tuple
 
 import spotipy
 
-from ..api import BATCH_SIZE, chunked, get_all_playlist_items, is_usable_track, item_track, playlist_name, track_artist_names
+from ..api import BATCH_SIZE, get_all_playlist_items, is_usable_track, item_track, playlist_name, track_artist_names
 from ..backups import make_snapshot, save_snapshot
 from ..errors import SpotmvError
 from ..refs import LIKED_KEYS, resolve_playlist
+from ..targets import remove_all_from_target
 
 
 def register(sub: argparse._SubParsersAction) -> argparse.ArgumentParser:
@@ -31,20 +32,28 @@ def validate(args: argparse.Namespace) -> None:
         raise SpotmvError("Liked Songs can't contain duplicates; dupes works on playlists")
 
 
-def remove_positions(sp: spotipy.Spotify, playlist_id: str, extras: List[Tuple[str, int]]) -> None:
-    """Remove the items at the given (uri, position) pairs.
+def dedupe(sp: spotipy.Spotify, playlist_id: str, keep_at: Dict[str, int]) -> None:
+    """Leave one copy of each uri in `keep_at`, at the index given.
 
-    Positions are relative to the playlist as it is now, and each call shifts
-    everything after what it removes -- so go from the highest position down,
-    which keeps every position still to be removed valid.
+    Spotify can't remove a copy by position (it ignores positions and removes
+    every occurrence), so remove each duplicated track entirely, then re-insert
+    one copy per track. Going in ascending index order means everything before
+    each insert point is already in its final place; runs of adjacent indexes go
+    in one call.
     """
-    for batch in chunked(sorted(extras, key=lambda pair: -pair[1]), BATCH_SIZE):
-        by_uri: Dict[str, List[int]] = {}
-        for uri, position in batch:
-            by_uri.setdefault(uri, []).append(position)
-        sp.playlist_remove_specific_occurrences_of_items(
-            playlist_id, [{"uri": uri, "positions": positions} for uri, positions in by_uri.items()]
-        )
+    remove_all_from_target(sp, playlist_id, list(keep_at))
+    ordered = sorted(keep_at.items(), key=lambda pair: pair[1])
+    run: List[str] = []
+    start = 0
+    for uri, index in ordered:
+        if run and (index != start + len(run) or len(run) == BATCH_SIZE):
+            sp.playlist_add_items(playlist_id, run, position=start)
+            run = []
+        if not run:
+            start = index
+        run.append(uri)
+    if run:
+        sp.playlist_add_items(playlist_id, run, position=start)
 
 
 def run(sp: spotipy.Spotify, args: argparse.Namespace) -> int:
@@ -70,6 +79,12 @@ def run(sp: spotipy.Spotify, args: argparse.Namespace) -> int:
             labels[uri] = f"{track.get('name') or '(unknown)'} - {artists}"
     repeated = [uri for uri in first_seen if copies[uri] > 1]
 
+    # where each repeated track's first copy sits once the extras are gone
+    extra_positions = {position for _, position in extras}
+    kept = [pos for pos in range(len(items)) if pos not in extra_positions]
+    final_index = {pos: i for i, pos in enumerate(kept)}
+    keep_at = {uri: final_index[first_seen[uri]] for uri in repeated}
+
     def print_summary() -> None:
         print(f"Playlist: {name} ({len(items)} tracks)\n")
         if not repeated:
@@ -82,8 +97,9 @@ def run(sp: spotipy.Spotify, args: argparse.Namespace) -> int:
             print(f"  ... and {len(repeated) - len(preview)} more")
         print()
         print(f"  Tracks with duplicates: {len(repeated)}")
-        print(f"  Extra copies to remove: {len(extras)} (the first copy stays where it is)")
+        print(f"  Extra copies to remove: {len(extras)} (the first copy keeps its place)")
         print(f"  Predicted count: {len(items) - len(extras)}")
+        print("  Note: the kept copies are re-added, so they show today as their date added.")
 
     if not args.apply:
         print("DRY RUN: no changes made\n")
@@ -97,7 +113,7 @@ def run(sp: spotipy.Spotify, args: argparse.Namespace) -> int:
 
     backup = save_snapshot(make_snapshot(playlist_id, name, items))
     try:
-        remove_positions(sp, playlist_id, extras)
+        dedupe(sp, playlist_id, keep_at)
     except spotipy.SpotifyException as exc:
         if getattr(exc, "http_status", None) == 403:
             raise SpotmvError(

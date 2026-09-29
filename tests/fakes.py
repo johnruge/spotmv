@@ -16,7 +16,6 @@ import spotipy
 WRITE_METHODS = frozenset({
     "playlist_add_items", "playlist_remove_all_occurrences_of_items",
     "playlist_replace_items", "playlist_change_details",
-    "playlist_remove_specific_occurrences_of_items",
     "current_user_saved_tracks_add", "current_user_saved_tracks_delete",
 })
 
@@ -141,15 +140,12 @@ class FakeSpotify:
         raise spotify_error(f"playlist not found: {playlist_id}", status=404)
 
     # -- writes (recorded, not simulated) --------------------------------- #
-    def playlist_add_items(self, playlist_id: str, uris: Sequence[str]) -> None:
-        self._record("playlist_add_items", playlist_id, list(uris))
+    def playlist_add_items(self, playlist_id: str, uris: Sequence[str], position: Optional[int] = None) -> None:
+        # the position is only recorded when given, so plain appends read as before
+        self._record("playlist_add_items", playlist_id, list(uris), *([] if position is None else [position]))
 
     def playlist_remove_all_occurrences_of_items(self, playlist_id: str, uris: Sequence[str]) -> None:
         self._record("playlist_remove_all_occurrences_of_items", playlist_id, list(uris))
-
-    def playlist_remove_specific_occurrences_of_items(self, playlist_id: str, items: Sequence[Dict[str, Any]],
-                                                      snapshot_id: Optional[str] = None) -> None:
-        self._record("playlist_remove_specific_occurrences_of_items", playlist_id, list(items))
 
     def playlist_replace_items(self, playlist_id: str, uris: Sequence[str]) -> None:
         self._record("playlist_replace_items", playlist_id, list(uris))
