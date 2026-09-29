@@ -14,7 +14,7 @@ from conftest import find_subparsers
 COMMANDS = [
     "ls", "alias", "move-artist", "move-all", "collect-artist",
     "rename", "tracks", "sort", "info", "describe",
-    "backup", "backups", "restore", "find", "dupes", "copy",
+    "backup", "backups", "restore", "find", "dupes", "copy", "diff",
 ]
 
 # every command that can change something on Spotify

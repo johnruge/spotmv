@@ -18,6 +18,7 @@ from . import (
     collect_artist,
     copy,
     describe,
+    diff,
     dupes,
     find,
     info,
@@ -48,4 +49,5 @@ COMMANDS = [
     find,
     dupes,
     copy,
+    diff,
 ]
