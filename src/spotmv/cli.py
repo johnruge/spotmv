@@ -28,14 +28,12 @@ from .api import (  # noqa: E402
     track_artist_names,
 )
 from .auth import get_client  # noqa: E402
-from .commands import ls  # noqa: E402
-from .config import load_aliases, save_aliases  # noqa: E402
+from .commands import alias, ls  # noqa: E402
 from .errors import SpotmvError  # noqa: E402
 from .output import format_duration, render_table  # noqa: E402
 from .refs import (  # noqa: E402
     LIKED,
     LIKED_KEYS,
-    parse_playlist_id,
     resolve_playlist,
     resolve_target,
 )
@@ -50,39 +48,6 @@ from .targets import (  # noqa: E402
 # --------------------------------------------------------------------------- #
 # Commands
 # --------------------------------------------------------------------------- #
-def cmd_alias(args: argparse.Namespace) -> int:
-    aliases = load_aliases()
-
-    if args.alias_cmd == "add":
-        playlist_id = parse_playlist_id(args.target)
-        aliases[args.name] = playlist_id
-        save_aliases(aliases)
-        print(f"added alias '{args.name}' -> {playlist_id}")
-        return 0
-
-    if args.alias_cmd == "rm":
-        if args.name not in aliases:
-            raise SpotmvError(f"no such alias: {args.name}")
-        removed = aliases.pop(args.name)
-        save_aliases(aliases)
-        print(f"removed alias '{args.name}' (was {removed})")
-        return 0
-
-    if args.alias_cmd == "ls":
-        if not aliases:
-            print("no aliases defined")
-            return 0
-        rows = [[name, pid] for name, pid in sorted(aliases.items())]
-        print(render_table(["ALIAS", "PLAYLIST ID"], rows))
-        return 0
-
-    if args.alias_cmd == "resolve":
-        print(resolve_playlist(args.name))
-        return 0
-
-    raise SpotmvError("unknown alias subcommand")
-
-
 def cmd_move_artist(args: argparse.Namespace) -> int:
     sp = get_client()
     source = resolve_target(args.source)
@@ -569,17 +534,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     ls.register(sub).set_defaults(handler=ls)
 
-    alias = sub.add_parser("alias", help="manage playlist aliases")
-    alias_sub = alias.add_subparsers(dest="alias_cmd", required=True)
-    p_add = alias_sub.add_parser("add", help="add an alias")
-    p_add.add_argument("name")
-    p_add.add_argument("target", help="playlist id, url, or spotify:playlist: uri")
-    p_rm = alias_sub.add_parser("rm", help="remove an alias")
-    p_rm.add_argument("name")
-    alias_sub.add_parser("ls", help="list aliases")
-    p_res = alias_sub.add_parser("resolve", help="print the id an alias resolves to")
-    p_res.add_argument("name")
-    alias.set_defaults(func=cmd_alias)
+    alias.register(sub).set_defaults(handler=alias)
 
     move = sub.add_parser("move-artist", help="move an artist's tracks between playlists")
     move.add_argument(
