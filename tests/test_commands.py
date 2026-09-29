@@ -1,0 +1,92 @@
+"""Commands run against a fake Spotify: the checks a dry run can't do for itself.
+
+A dry run shows you what *would* happen, but it can't prove it wrote nothing,
+and it never reaches the --apply path. These tests cover exactly that, plus the
+move planner's arithmetic. Everything else is verified by running the tool.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from fakes import FakeSpotify, make_item, make_playlist, make_track
+from spotmv.planning import by_artist, plan_move
+from spotmv.refs import uri_to_id
+
+GYM, CHILL = make_playlist("gym"), make_playlist("chill")
+NAS = make_track("N.Y. State of Mind", ["Nas"])
+FEAT = make_track("Feature", ["Jay", "Nas"])
+OTHER = make_track("Other", ["Someone"])
+LOCAL = make_item(make_track("Local File", ["Nas"], is_local=True))
+
+
+def items(*tracks):
+    return [make_item(t) for t in tracks]
+
+
+@pytest.fixture
+def sp(cli_module, monkeypatch):
+    """A fake account wired in as the client main() logs in with."""
+    fake = FakeSpotify(
+        playlists=[GYM, CHILL],
+        items={GYM["id"]: items(NAS, OTHER, NAS), CHILL["id"]: items(FEAT)},
+        saved=items(FEAT),
+    )
+    monkeypatch.setattr(cli_module, "get_client", lambda: fake)
+    return fake
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["move-artist", "--source", GYM["id"], "--dest", CHILL["id"], "--artist", "Nas"],
+        ["move-all", "--source", GYM["id"], "--dest", "liked"],
+        ["collect-artist", "--dest", CHILL["id"], "--artist", "Nas"],
+        ["sort", GYM["id"], "--by", "title"],
+    ],
+    ids=lambda argv: argv[0],
+)
+def test_dry_run_writes_nothing(cli_module, sp, capsys, argv):
+    """The README's core promise, checked on every command that can write."""
+    assert cli_module.main(argv) == 0
+    assert "DRY RUN" in capsys.readouterr().out
+    assert sp.writes == []
+
+
+@pytest.mark.parametrize(
+    "argv, expected",
+    [
+        (
+            ["move-artist", "--source", GYM["id"], "--dest", CHILL["id"], "--artist", "nas"],
+            [
+                ("playlist_add_items", CHILL["id"], [NAS["uri"]]),
+                ("playlist_remove_all_occurrences_of_items", GYM["id"], [NAS["uri"]]),
+            ],
+        ),
+        (  # Liked Songs takes bare track ids on its own endpoints
+            ["move-all", "--source", GYM["id"], "--dest", "liked"],
+            [
+                ("current_user_saved_tracks_add", [uri_to_id(NAS["uri"]), uri_to_id(OTHER["uri"])]),
+                ("playlist_remove_all_occurrences_of_items", GYM["id"], [NAS["uri"], OTHER["uri"]]),
+            ],
+        ),
+    ],
+    ids=["move-artist", "move-all-to-liked"],
+)
+def test_apply_writes_to_the_right_places(cli_module, sp, argv, expected):
+    assert cli_module.main(argv + ["--apply"]) == 0
+    assert sp.writes == expected
+
+
+def test_plan_counts_every_copy_but_moves_each_track_once():
+    plan = plan_move(items(NAS, OTHER, NAS) + [LOCAL] + items(FEAT), [], by_artist(" NAS "))
+    assert plan.occurrences == 3  # both copies of NAS + the feature; the local file is skipped
+    assert plan.uris == [NAS["uri"], FEAT["uri"]]  # deduped, first-seen order
+    assert plan.predicted_source == 2  # OTHER and the local file stay
+
+
+def test_plan_skips_tracks_already_in_destination():
+    plan = plan_move(items(NAS, FEAT), items(FEAT, OTHER))
+    assert plan.to_add == [NAS["uri"]]
+    assert plan.already_in_dest == 1
+    assert plan.predicted_dest == 3
