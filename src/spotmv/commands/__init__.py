@@ -28,6 +28,7 @@ from . import (
     rename,
     restore,
     sort,
+    stats,
     tracks,
 )
 
@@ -50,4 +51,5 @@ COMMANDS = [
     dupes,
     copy,
     diff,
+    stats,
 ]
