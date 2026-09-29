@@ -8,7 +8,7 @@ from typing import Dict, List, Tuple
 import spotipy
 
 from ..api import BATCH_SIZE, get_all_playlist_items, is_usable_track, item_track, playlist_name, track_artist_names
-from ..backups import make_snapshot, save_snapshot
+from ..backups import make_snapshot, recoverable_write, save_snapshot
 from ..errors import SpotmvError
 from ..refs import LIKED_KEYS, resolve_playlist
 from ..targets import remove_all_from_target
@@ -112,18 +112,8 @@ def run(sp: spotipy.Spotify, args: argparse.Namespace) -> int:
     print()
 
     backup = save_snapshot(make_snapshot(playlist_id, name, items))
-    try:
+    with recoverable_write(backup, name, "remove duplicates"):
         dedupe(sp, playlist_id, keep_at)
-    except spotipy.SpotifyException as exc:
-        if getattr(exc, "http_status", None) == 403:
-            raise SpotmvError(
-                f"not allowed to modify this playlist (you may not be the owner): {name}"
-            ) from exc
-        raise SpotmvError(
-            f"could not remove duplicates: {exc}\n"
-            "some copies may already be gone. put it back with:\n"
-            f"  spotmv restore {backup.name} --apply"
-        ) from exc
 
     print("DONE")
     print(f"  Removed {len(extras)} extra cop{'y' if len(extras) == 1 else 'ies'} from {name}.")

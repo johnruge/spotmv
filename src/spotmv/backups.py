@@ -8,9 +8,14 @@ follows config.CONFIG_DIR.
 from __future__ import annotations
 
 import json
+import sys
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import Any, Dict, Iterator, List, Sequence, Tuple
+
+import requests
+import spotipy
 
 from . import config
 from .api import item_track, track_artist_names
@@ -87,3 +92,30 @@ def load_snapshot(ref: str) -> Tuple[Path, Dict[str, Any]]:
     ):
         raise SpotmvError(f"not a spotmv backup: {path}")
     return path, data
+
+
+@contextmanager
+def recoverable_write(backup: Path, name: str, action: str) -> Iterator[None]:
+    """Wrap a write that takes several API calls.
+
+    If it fails partway -- a Spotify error, a dropped connection, or Ctrl-C --
+    the playlist can be left half-written, so the error ends with the exact
+    command that puts it back from `backup`.
+    """
+    hint = (
+        "\nthe playlist may now be incomplete. put it back with:\n"
+        f"  spotmv restore {backup.name} --apply"
+    )
+    try:
+        yield
+    except spotipy.SpotifyException as exc:
+        if getattr(exc, "http_status", None) == 403:  # refused up front: nothing changed
+            raise SpotmvError(
+                f"not allowed to modify this playlist (you may not be the owner): {name}"
+            ) from exc
+        raise SpotmvError(f"could not {action}: {exc}{hint}") from exc
+    except requests.exceptions.RequestException as exc:
+        raise SpotmvError(f"network problem while trying to {action}: {exc}{hint}") from exc
+    except KeyboardInterrupt:
+        sys.stderr.write(hint.lstrip("\n") + "\n")
+        raise

@@ -8,7 +8,7 @@ from typing import List
 import spotipy
 
 from ..api import get_all_playlist_items, item_track, playlist_name
-from ..backups import load_snapshot
+from ..backups import load_snapshot, make_snapshot, recoverable_write, save_snapshot
 from ..errors import SpotmvError
 from ..refs import parse_playlist_id
 from ..targets import replace_playlist_items
@@ -90,15 +90,12 @@ def run(sp: spotipy.Spotify, args: argparse.Namespace) -> int:
         return 0
     print()
 
-    try:
+    # restoring overwrites whatever is there now, so that gets a backup too
+    backup = save_snapshot(make_snapshot(playlist_id, name, items))
+    with recoverable_write(backup, name, "restore playlist"):
         replace_playlist_items(sp, playlist_id, wanted)
-    except spotipy.SpotifyException as exc:
-        if getattr(exc, "http_status", None) == 403:
-            raise SpotmvError(
-                f"not allowed to modify this playlist (you may not be the owner): {name}"
-            ) from exc
-        raise SpotmvError(f"could not restore playlist: {exc}") from exc
 
     print("DONE")
     print(f"  Restored {name} to {len(wanted)} track(s) from {path.name}.")
+    print(f"  Previous version backed up to {backup.name}")
     return 0

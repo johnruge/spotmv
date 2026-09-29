@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 
 import pytest
+import requests
 
 from fakes import FakeSpotify, make_item, make_playlist, make_track, spotify_error
 from spotmv.backups import backups_dir, make_snapshot
@@ -105,12 +106,17 @@ def test_apply_writes_to_the_right_places(cli_module, sp, argv, expected):
 
 
 
-def test_failed_sort_can_be_undone_with_its_backup(cli_module, sp, capsys):
+@pytest.mark.parametrize(
+    "failure",
+    [spotify_error("rate limited", status=429), requests.exceptions.ConnectionError("dropped")],
+    ids=["spotify-error", "network-error"],
+)
+def test_failed_sort_can_be_undone_with_its_backup(cli_module, sp, capsys, failure):
     """sort writes 100 tracks, then appends; if the append fails the playlist is
     left truncated. The error must name a backup that restores it exactly."""
     original = items(*[make_track(f"t{i:03}") for i in range(150)])
     sp.items[GYM["id"]] = original
-    sp.fail_on("playlist_add_items", spotify_error("rate limited", status=429))
+    sp.fail_on("playlist_add_items", failure)
 
     assert cli_module.main(["sort", GYM["id"], "--by", "title", "--descending", "--apply"]) == 1
     backup = capsys.readouterr().err.split("spotmv restore ")[1].split()[0]

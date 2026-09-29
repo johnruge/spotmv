@@ -8,7 +8,7 @@ from typing import Any, Dict
 import spotipy
 
 from ..api import get_all_playlist_items, item_track, playlist_name, track_artist_names
-from ..backups import make_snapshot, save_snapshot
+from ..backups import make_snapshot, recoverable_write, save_snapshot
 from ..errors import SpotmvError
 from ..refs import LIKED_KEYS, resolve_playlist
 from ..targets import replace_playlist_items
@@ -126,18 +126,8 @@ def run(sp: spotipy.Spotify, args: argparse.Namespace) -> int:
     backup = save_snapshot(make_snapshot(playlist_id, name, items))
 
     new_uris = [item_track(item)["uri"] for item in ordered]
-    try:
+    with recoverable_write(backup, name, "reorder playlist"):
         replace_playlist_items(sp, playlist_id, new_uris)
-    except spotipy.SpotifyException as exc:
-        if getattr(exc, "http_status", None) == 403:
-            raise SpotmvError(
-                f"not allowed to modify this playlist (you may not be the owner): {name}"
-            ) from exc
-        raise SpotmvError(
-            f"could not reorder playlist: {exc}\n"
-            "the playlist may now be incomplete. put it back with:\n"
-            f"  spotmv restore {backup.name} --apply"
-        ) from exc
 
     print("DONE")
     print(f"  Reordered {len(new_uris)} track(s) in {name} by {args.by} ({direction}).")
