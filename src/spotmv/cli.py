@@ -28,6 +28,7 @@ from .api import (  # noqa: E402
     track_artist_names,
 )
 from .auth import get_client  # noqa: E402
+from .commands import ls  # noqa: E402
 from .config import load_aliases, save_aliases  # noqa: E402
 from .errors import SpotmvError  # noqa: E402
 from .output import format_duration, render_table  # noqa: E402
@@ -49,30 +50,6 @@ from .targets import (  # noqa: E402
 # --------------------------------------------------------------------------- #
 # Commands
 # --------------------------------------------------------------------------- #
-def cmd_ls(args: argparse.Namespace) -> int:
-    sp = get_client()
-    me_id = sp.current_user().get("id")
-    playlists = get_all_playlists(sp)
-
-    rows = []
-    for pl in playlists:
-        owner = pl.get("owner") or {}
-        owned = owner.get("id") == me_id
-        rows.append(
-            [
-                pl.get("name") or "(unnamed)",
-                pl.get("id") or "",
-                owner.get("display_name") or owner.get("id") or "",
-                "yes" if owned else "no",
-            ]
-        )
-
-    headers = ["NAME", "ID", "OWNER", "OWNED"]
-    print(render_table(headers, rows))
-    print(f"\n{len(rows)} playlist(s) (use 'spotmv info <playlist>' for track counts)")
-    return 0
-
-
 def cmd_alias(args: argparse.Namespace) -> int:
     aliases = load_aliases()
 
@@ -590,9 +567,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("ls", help="list playlists accessible to you").set_defaults(
-        func=cmd_ls
-    )
+    ls.register(sub).set_defaults(handler=ls)
 
     alias = sub.add_parser("alias", help="manage playlist aliases")
     alias_sub = alias.add_subparsers(dest="alias_cmd", required=True)
@@ -716,7 +691,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
-        return args.func(args)
+        command = getattr(args, "handler", None)
+        if command is None:
+            # not yet moved into commands/ -- this branch goes away once all are
+            return args.func(args)
+        # validate before logging in, so bad input fails fast and offline
+        validate = getattr(command, "validate", None)
+        if validate is not None:
+            validate(args)
+        sp = get_client() if getattr(command, "NEEDS_CLIENT", True) else None
+        return command.run(sp, args)
     except SpotmvError as exc:
         sys.stderr.write(f"error: {exc}\n")
         return 1
