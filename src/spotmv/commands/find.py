@@ -16,7 +16,7 @@ from ..api import (
     track_artist_names,
 )
 from ..errors import SpotmvError
-from ..output import render_table
+from ..output import add_json_flag, emit, render_table
 
 
 def register(sub: argparse._SubParsersAction) -> argparse.ArgumentParser:
@@ -24,6 +24,7 @@ def register(sub: argparse._SubParsersAction) -> argparse.ArgumentParser:
         "find", help="search your playlists and Liked Songs by title or artist"
     )
     find.add_argument("query", help="text to look for (case-insensitive)")
+    add_json_flag(find)
     return find
 
 
@@ -48,8 +49,7 @@ def run(sp: spotipy.Spotify, args: argparse.Namespace) -> int:
     ]
     places.append(("Liked Songs", get_all_saved_tracks(sp)))
 
-    rows = []
-    found_in = set()
+    found: List[Dict[str, Any]] = []
     for place, items in places:
         seen = set()  # list a track once per playlist, even if it's in there twice
         for item in items:
@@ -59,14 +59,25 @@ def run(sp: spotipy.Spotify, args: argparse.Namespace) -> int:
             if track["uri"] in seen or not matches(track, needle):
                 continue
             seen.add(track["uri"])
-            found_in.add(place)
-            artists = ", ".join(n for n in track_artist_names(track) if n) or "-"
-            rows.append([track.get("name") or "(unknown)", artists, place])
+            found.append(
+                {
+                    "title": track.get("name") or "(unknown)",
+                    "artists": [n for n in track_artist_names(track) if n],
+                    "playlist": place,
+                    "uri": track["uri"],
+                }
+            )
 
-    print(f'Searched {len(owned)} owned playlist(s) and Liked Songs for "{args.query.strip()}".\n')
-    if not rows:
-        print("no matches")
-        return 0
-    print(render_table(["TITLE", "ARTISTS", "PLAYLIST"], rows))
-    print(f"\n{len(rows)} match(es) across {len(found_in)} playlist(s)")
+    def render() -> None:
+        print(f'Searched {len(owned)} owned playlist(s) and Liked Songs for "{args.query.strip()}".\n')
+        if not found:
+            print("no matches")
+            return
+        rows = [[f["title"], ", ".join(f["artists"]) or "-", f["playlist"]] for f in found]
+        print(render_table(["TITLE", "ARTISTS", "PLAYLIST"], rows))
+        playlists = len({f["playlist"] for f in found})
+        print(f"\n{len(rows)} match(es) across {playlists} playlist(s)")
+
+    data = {"query": args.query.strip(), "playlists_searched": len(owned) + 1, "matches": found}
+    emit(args, data, render)
     return 0
