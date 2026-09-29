@@ -80,12 +80,15 @@ def plan_move(
     )
 
 
-def print_move_summary(plan: MovePlan, source_name: str, dest_name: str, found_label: str) -> None:
+def print_move_summary(
+    plan: MovePlan, source_name: str, dest_name: str, found_label: str, remove: bool = True
+) -> None:
     print(f"Source: {source_name}")
     print(f"  Current count: {plan.source_total}")
     print(f"  {found_label}: {plan.occurrences}")
-    print(f"  Would remove from source: {plan.occurrences}")
-    print(f"  Predicted source count: {plan.predicted_source}")
+    if remove:
+        print(f"  Would remove from source: {plan.occurrences}")
+        print(f"  Predicted source count: {plan.predicted_source}")
     print()
     print(f"Destination: {dest_name}")
     print(f"  Current count: {plan.dest_total}")
@@ -99,8 +102,10 @@ def run_move(
     args: argparse.Namespace,
     matches: Callable[[Track], bool],
     found_label: str,
+    remove: bool = True,
 ) -> int:
-    """The shared body of move-artist and move-all: plan, print, and (with --apply) do it."""
+    """The shared body of move-artist, move-all and copy: plan, print, and (with
+    --apply) do it. remove=False copies instead: the source is left untouched."""
     source = resolve_target(args.source)
     dest = resolve_target(args.dest)
     if source == dest:
@@ -112,21 +117,23 @@ def run_move(
 
     if not args.apply:
         print("DRY RUN: no changes made\n")
-        print_move_summary(plan, source_name, dest_name, found_label)
+        print_move_summary(plan, source_name, dest_name, found_label, remove)
         return 0
 
-    print_move_summary(plan, source_name, dest_name, found_label)
+    print_move_summary(plan, source_name, dest_name, found_label, remove)
     print()
 
     if not plan.uris:
-        print("nothing to move.")
+        print(f"nothing to {'move' if remove else 'copy'}.")
         return 0
 
     if plan.to_add:
         add_to_target(sp, dest, plan.to_add)
-    remove_all_from_target(sp, source, plan.uris)
+    if remove:
+        remove_all_from_target(sp, source, plan.uris)
 
     print("DONE")
     print(f"  Added {len(plan.to_add)} track(s) to {dest_name}.")
-    print(f"  Removed {plan.occurrences} track(s) from {source_name}.")
+    if remove:
+        print(f"  Removed {plan.occurrences} track(s) from {source_name}.")
     return 0

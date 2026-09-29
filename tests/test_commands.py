@@ -53,6 +53,7 @@ def sp(cli_module, monkeypatch):
         ["sort", GYM["id"], "--by", "title"],
         ["restore", "gym.json"],
         ["dupes", GYM["id"]],
+        ["copy", "--source", GYM["id"], "--dest", CHILL["id"]],
     ],
     ids=lambda argv: argv[0],
 )
@@ -88,8 +89,12 @@ def test_dry_run_writes_nothing(cli_module, sp, capsys, argv):
             ["dupes", GYM["id"]],
             [("playlist_remove_specific_occurrences_of_items", GYM["id"], [{"uri": NAS["uri"], "positions": [2]}])],
         ),
+        (  # like move-artist, but nothing leaves the source
+            ["copy", "--source", GYM["id"], "--dest", CHILL["id"], "--artist", "nas"],
+            [("playlist_add_items", CHILL["id"], [NAS["uri"]])],
+        ),
     ],
-    ids=["move-artist", "move-all-to-liked", "restore", "dupes"],
+    ids=["move-artist", "move-all-to-liked", "restore", "dupes", "copy"],
 )
 def test_apply_writes_to_the_right_places(cli_module, sp, argv, expected):
     assert cli_module.main(argv + ["--apply"]) == 0

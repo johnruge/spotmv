@@ -16,6 +16,7 @@ from . import (
     backup,
     backups,
     collect_artist,
+    copy,
     describe,
     dupes,
     find,
@@ -46,4 +47,5 @@ COMMANDS = [
     restore,
     find,
     dupes,
+    copy,
 ]
