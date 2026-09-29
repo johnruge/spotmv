@@ -28,7 +28,7 @@ from .api import (  # noqa: E402
     track_artist_names,
 )
 from .auth import get_client  # noqa: E402
-from .commands import alias, info, ls, rename, tracks  # noqa: E402
+from .commands import alias, describe, info, ls, rename, tracks  # noqa: E402
 from .errors import SpotmvError  # noqa: E402
 from .output import format_duration  # noqa: E402
 from .refs import (  # noqa: E402
@@ -394,30 +394,6 @@ def cmd_sort(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_describe(args: argparse.Namespace) -> int:
-    if args.playlist.strip().lower() in LIKED_KEYS:
-        raise SpotmvError("Liked Songs has no editable description (it is not a playlist)")
-
-    description = args.description
-    sp = get_client()
-    playlist_id = resolve_playlist(args.playlist)
-    name = playlist_name(sp, playlist_id)
-    try:
-        sp.playlist_change_details(playlist_id, description=description)
-    except spotipy.SpotifyException as exc:
-        if getattr(exc, "http_status", None) == 403:
-            raise SpotmvError(
-                f"not allowed to edit this playlist (you may not be the owner): {name}"
-            ) from exc
-        raise SpotmvError(f"could not update description: {exc}") from exc
-
-    if description.strip():
-        print(f"updated description for '{name}'")
-    else:
-        print(f"cleared description for '{name}'")
-    return 0
-
-
 # --------------------------------------------------------------------------- #
 # CLI wiring
 # --------------------------------------------------------------------------- #
@@ -500,12 +476,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     info.register(sub).set_defaults(handler=info)
 
-    describe = sub.add_parser("describe", help="set a playlist's description")
-    describe.add_argument("playlist", help="playlist or alias")
-    describe.add_argument(
-        "description", help="the new description (pass an empty string to clear)"
-    )
-    describe.set_defaults(func=cmd_describe)
+    describe.register(sub).set_defaults(handler=describe)
 
     return parser
 
