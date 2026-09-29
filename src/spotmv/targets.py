@@ -52,3 +52,16 @@ def remove_all_from_target(sp: spotipy.Spotify, target: str, uris: Sequence[str]
     else:
         for batch in chunked(list(uris), BATCH_SIZE):
             sp.playlist_remove_all_occurrences_of_items(target, batch)
+
+
+def replace_playlist_items(sp: spotipy.Spotify, playlist_id: str, uris: Sequence[str]) -> None:
+    """Make a playlist contain exactly `uris`, in order.
+
+    Spotify replaces at most 100 items per call, so the rest are appended.
+    NOT atomic: if an append fails, the playlist is left holding only the
+    first part -- callers should snapshot first (see backups.py).
+    """
+    uris = list(uris)
+    sp.playlist_replace_items(playlist_id, uris[:BATCH_SIZE])
+    for batch in chunked(uris[BATCH_SIZE:], BATCH_SIZE):
+        sp.playlist_add_items(playlist_id, batch)

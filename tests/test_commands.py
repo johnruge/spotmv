@@ -7,9 +7,12 @@ move planner's arithmetic. Everything else is verified by running the tool.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from fakes import FakeSpotify, make_item, make_playlist, make_track
+from spotmv.backups import backups_dir, make_snapshot
 from spotmv.planning import by_artist, plan_move
 from spotmv.refs import uri_to_id
 
@@ -33,6 +36,11 @@ def sp(cli_module, monkeypatch):
         saved=items(FEAT),
     )
     monkeypatch.setattr(cli_module, "get_client", lambda: fake)
+    # a saved backup of gym in a different order, for restore
+    backups_dir().mkdir(parents=True)
+    (backups_dir() / "gym.json").write_text(
+        json.dumps(make_snapshot(GYM["id"], "gym", items(OTHER, NAS)))
+    )
     return fake
 
 
@@ -43,6 +51,7 @@ def sp(cli_module, monkeypatch):
         ["move-all", "--source", GYM["id"], "--dest", "liked"],
         ["collect-artist", "--dest", CHILL["id"], "--artist", "Nas"],
         ["sort", GYM["id"], "--by", "title"],
+        ["restore", "gym.json"],
     ],
     ids=lambda argv: argv[0],
 )
@@ -70,8 +79,12 @@ def test_dry_run_writes_nothing(cli_module, sp, capsys, argv):
                 ("playlist_remove_all_occurrences_of_items", GYM["id"], [NAS["uri"], OTHER["uri"]]),
             ],
         ),
+        (  # back to exactly the saved order
+            ["restore", "gym.json"],
+            [("playlist_replace_items", GYM["id"], [OTHER["uri"], NAS["uri"]])],
+        ),
     ],
-    ids=["move-artist", "move-all-to-liked"],
+    ids=["move-artist", "move-all-to-liked", "restore"],
 )
 def test_apply_writes_to_the_right_places(cli_module, sp, argv, expected):
     assert cli_module.main(argv + ["--apply"]) == 0

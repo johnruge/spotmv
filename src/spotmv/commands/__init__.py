@@ -22,6 +22,7 @@ from . import (
     move_all,
     move_artist,
     rename,
+    restore,
     sort,
     tracks,
 )
@@ -40,4 +41,5 @@ COMMANDS = [
     describe,
     backup,
     backups,
+    restore,
 ]
