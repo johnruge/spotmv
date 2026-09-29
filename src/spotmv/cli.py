@@ -28,9 +28,9 @@ from .api import (  # noqa: E402
     track_artist_names,
 )
 from .auth import get_client  # noqa: E402
-from .commands import alias, ls  # noqa: E402
+from .commands import alias, ls, tracks  # noqa: E402
 from .errors import SpotmvError  # noqa: E402
-from .output import format_duration, render_table  # noqa: E402
+from .output import format_duration  # noqa: E402
 from .refs import (  # noqa: E402
     LIKED,
     LIKED_KEYS,
@@ -395,37 +395,6 @@ def cmd_sort(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_tracks(args: argparse.Namespace) -> int:
-    sp = get_client()
-    target = resolve_target(args.playlist)
-    name = target_name(sp, target)
-    items = get_all_target_items(sp, target)
-
-    me = sp.current_user()
-    me_id = me.get("id")
-    me_name = me.get("display_name") or me_id or "you"
-
-    rows = []
-    for index, item in enumerate(items, start=1):
-        track = item_track(item)
-        if not track:
-            continue
-        title = track.get("name") or "(unknown)"
-        artists = ", ".join(n for n in track_artist_names(track) if n) or "-"
-        added_at = (item.get("added_at") or "")[:10]
-        if target == LIKED:
-            added_by = me_name
-        else:
-            added_by_id = (item.get("added_by") or {}).get("id", "")
-            added_by = me_name if added_by_id == me_id else (added_by_id or "-")
-        rows.append([str(index), title, artists, added_by, added_at or "-"])
-
-    print(f"{name} - {len(rows)} track(s)")
-    print("(note: producer/songwriter credits are not available via the Spotify API)\n")
-    print(render_table(["#", "TITLE", "ARTISTS", "ADDED BY", "ADDED"], rows))
-    return 0
-
-
 def cmd_info(args: argparse.Namespace) -> int:
     sp = get_client()
     target = resolve_target(args.playlist)
@@ -579,11 +548,7 @@ def build_parser() -> argparse.ArgumentParser:
     rename.add_argument("name", help="the new playlist name")
     rename.set_defaults(func=cmd_rename)
 
-    tracks = sub.add_parser(
-        "tracks", help="list songs in a playlist with artists, who added them, and when"
-    )
-    tracks.add_argument("playlist", help="playlist, alias, or 'liked'")
-    tracks.set_defaults(func=cmd_tracks)
+    tracks.register(sub).set_defaults(handler=tracks)
 
     srt = sub.add_parser(
         "sort",
