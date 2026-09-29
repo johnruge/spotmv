@@ -43,18 +43,21 @@ def _handle_rate_limit(exc: spotipy.SpotifyException) -> None:
     headers = getattr(exc, "headers", None) or {}
     retry_after = headers.get("Retry-After") if hasattr(headers, "get") else None
     sys.stderr.write("error: Spotify is rate-limiting this app (HTTP 429).\n")
-    if retry_after:
-        try:
-            secs = int(retry_after)
-            sys.stderr.write(
-                f"       Spotify asks to wait ~{format_duration(secs * 1000)} before retrying.\n"
-            )
-        except ValueError:
-            pass
+    try:
+        secs = int(retry_after)
+        sys.stderr.write(
+            f"       Spotify asks to wait ~{format_duration(secs * 1000)} before retrying.\n"
+        )
+    except (TypeError, ValueError):
+        sys.stderr.write("       Spotify didn't say how long to wait; try again in a few minutes.\n")
+    if getattr(exc, "reason", None) == "QUOTA_EXCEEDED":
+        sys.stderr.write(
+            "       Reason: the app's development-mode quota is used up. Quotas are\n"
+            "       counted per developer account, so creating a new app won't reset it.\n"
+        )
     sys.stderr.write(
-        "       Rate limits are per Spotify app and reset after the wait above.\n"
-        "       Tip: avoid running large scans repeatedly; if you're blocked for a\n"
-        "       long time, you can create a new app in the dashboard for a fresh limit.\n"
+        "       Tip: find and collect-artist read every playlist you own, so they use\n"
+        "       the most requests -- avoid running them back to back.\n"
     )
 
 
