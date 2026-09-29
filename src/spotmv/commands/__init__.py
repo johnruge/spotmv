@@ -17,6 +17,7 @@ from . import (
     backups,
     collect_artist,
     describe,
+    find,
     info,
     ls,
     move_all,
@@ -42,4 +43,5 @@ COMMANDS = [
     backup,
     backups,
     restore,
+    find,
 ]
