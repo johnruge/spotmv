@@ -105,7 +105,6 @@ def test_apply_writes_to_the_right_places(cli_module, sp, argv, expected):
     assert sp.writes == expected
 
 
-
 @pytest.mark.parametrize(
     "failure",
     [spotify_error("rate limited", status=429), requests.exceptions.ConnectionError("dropped")],
@@ -127,6 +126,7 @@ def test_failed_sort_can_be_undone_with_its_backup(cli_module, sp, capsys, failu
     assert cli_module.main(["restore", backup, "--apply"]) == 0
     restored = [uri for call in sp.writes for uri in call[-1]]
     assert restored == [item["track"]["uri"] for item in original]
+
 
 def test_plan_counts_every_copy_but_moves_each_track_once():
     plan = plan_move(items(NAS, OTHER, NAS) + [LOCAL] + items(FEAT), [], by_artist(" NAS "))

@@ -12,6 +12,7 @@ from ..planning import MovePlan, by_artist, plan_move
 from ..refs import resolve_playlist
 from ..targets import add_to_target, remove_all_from_target
 
+
 def register(sub: argparse._SubParsersAction) -> argparse.ArgumentParser:
     collect = sub.add_parser(
         "collect-artist",
