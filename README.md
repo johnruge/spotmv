@@ -27,10 +27,11 @@ unless you pass `--apply`.
 
 ## Setup
 
-1. Install dependencies (Python 3.9+):
+1. Install dependencies (Python 3.9+) into a virtualenv in the project folder:
 
 ```bash
-pip install -r requirements.txt
+python3 -m venv venv
+./venv/bin/pip install -r requirements.txt
 ```
 
 2. Create a Spotify app at the
@@ -51,18 +52,23 @@ export SPOTIPY_CLIENT_SECRET=...
 export SPOTIPY_REDIRECT_URI=http://127.0.0.1:8888/callback
 ```
 
-4. Make the script runnable and put it on your `PATH` (optional):
+4. Run it with the virtualenv's Python. `spotmv` starts with
+   `#!/usr/bin/env python3`, which only finds the dependencies while the
+   virtualenv is active, so an alias that names the venv's Python works from
+   anywhere:
 
 ```bash
-chmod +x spotmv
 # from the project directory:
-./spotmv ls
-# or add an alias to your shell config:
-alias spotmv="$(pwd)/spotmv"
+./venv/bin/python spotmv ls
+# or, from the project folder, add an alias with the full paths filled in
+# (use ~/.bashrc instead of ~/.zshrc if you use bash):
+echo "alias spotmv='$(pwd)/venv/bin/python $(pwd)/spotmv'" >> ~/.zshrc
 ```
 
 The first command opens a browser once for OAuth login; the token is cached in
-`~/.config/spotmv/`.
+`~/.config/spotmv/`. Credentials are read from a `.env` next to the `spotmv`
+script first, then from the current directory, then from
+`~/.config/spotmv/.env`; anything already exported in your shell wins.
 
 ## Usage
 
@@ -179,6 +185,42 @@ spotmv move-artist --source gym --dest liked --artist "Kendrick Lamar" --apply
 > Note: `liked` support uses the `user-library-read` and `user-library-modify`
 > scopes. If you authorized an earlier version, the first run after updating will
 > open the browser again to grant the new permissions.
+
+## Safety
+
+- **Dry run first.** `move-artist`, `move-all`, `copy`, `collect-artist`,
+  `sort`, `dupes` and `restore` only show what they would do until you add
+  `--apply`. `rename` and `describe` are the exception: they change the
+  playlist immediately.
+- **Automatic backups.** `sort`, `dupes` and `restore` rewrite a playlist in
+  several API calls (Spotify accepts at most 100 tracks per call), so before
+  writing they save the playlist's current track order to the backups folder.
+  If a call fails partway (a network error, a rate limit, or Ctrl-C), spotmv
+  prints the exact `spotmv restore <file> --apply` line that puts it back.
+  Backups are never deleted automatically; clear out old ones by hand.
+- **Dates added.** `dupes` removes each duplicated track and re-adds one copy in
+  its original position, so the copies it keeps show today as their date added.
+  `sort` and `restore` replace the whole track list, so Spotify may reset dates
+  there too.
+- **Local files.** `sort` and `restore` refuse playlists containing local files,
+  because local files can't be re-added through the API and replacing the track
+  list would delete them. `dupes` leaves local files alone.
+- **Liked Songs moves unlike.** Moving tracks out of `liked` removes them from
+  your library; use `copy` to keep them.
+
+## Spotify's limits
+
+- **Only playlists you own.** Since Spotify's February 2026 API change, apps can
+  only read the tracks of playlists you own. Playlists you follow still appear
+  in `ls`, but commands that read their tracks fail with a 403 and an
+  explanation.
+- **Request quota.** Apps in Spotify's development mode get a limited number of
+  requests. `find` and `collect-artist` read every playlist you own, so they use
+  the most; avoid running them back to back. If you hit the quota, spotmv shows
+  the wait Spotify reports, which can be many hours. Quotas count per developer
+  account, so creating another app doesn't reset it.
+- **No credits.** Producer and songwriter credits aren't available through the
+  Spotify API.
 
 ## Config location
 
