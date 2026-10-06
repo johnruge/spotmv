@@ -200,8 +200,9 @@ spotmv move-artist --source gym --dest liked --artist "Kendrick Lamar" --apply
   Backups are never deleted automatically; clear out old ones by hand.
 - **Dates added.** `dupes` removes each duplicated track and re-adds one copy in
   its original position, so the copies it keeps show today as their date added.
-  `sort` and `restore` replace the whole track list, so Spotify may reset dates
-  there too.
+  `sort` and `restore` keep the date of every track already in the playlist
+  (Spotify preserves it when the track list is replaced); only tracks that
+  `restore` adds back show today's date.
 - **Local files.** `sort` and `restore` refuse playlists containing local files,
   because local files can't be re-added through the API and replacing the track
   list would delete them. `dupes` leaves local files alone.
