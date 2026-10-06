@@ -37,11 +37,20 @@ def get_all_playlists(sp: spotipy.Spotify) -> List[Dict[str, Any]]:
 def get_all_playlist_items(sp: spotipy.Spotify, playlist_id: str) -> List[Dict[str, Any]]:
     """Return every playlist item in order, handling pagination."""
     items: List[Dict[str, Any]] = []
-    page = sp.playlist_items(
-        playlist_id,
-        limit=100,
-        additional_types=("track",),
-    )
+    try:
+        page = sp.playlist_items(
+            playlist_id,
+            limit=100,
+            additional_types=("track",),
+        )
+    except spotipy.SpotifyException as exc:
+        if getattr(exc, "http_status", None) == 403:
+            raise SpotmvError(
+                f"Spotify won't let this app read the tracks of playlist {playlist_id} (HTTP 403).\n"
+                "Since its February 2026 API change, Spotify only shares the tracks of\n"
+                "playlists you own, so playlists you only follow can't be read."
+            ) from exc
+        raise
     while page:
         items.extend(page.get("items") or [])
         if page.get("next"):
