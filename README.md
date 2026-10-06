@@ -9,10 +9,16 @@ It can:
 - list every playlist you can access (`ls`)
 - move all tracks by a given artist from one playlist to another (`move-artist`)
 - move every track from one playlist into another (`move-all`)
+- copy tracks into another playlist without removing them (`copy`)
 - gather an artist's tracks from every playlist you own into one playlist (`collect-artist`)
 - list a playlist's songs with artists, who added them, and when (`tracks`)
 - reorder a playlist by a track attribute (`sort`)
+- find and remove duplicate tracks in a playlist (`dupes`)
+- search all your playlists and Liked Songs for a song or artist (`find`)
+- compare two playlists (`diff`)
 - show details about a playlist: track count, total length, owner, etc. (`info`)
+- show a playlist's top artists, release decades and length (`stats`)
+- back up a playlist's track order and restore it later (`backup`, `backups`, `restore`)
 - rename a playlist (`rename`) or edit its description (`describe`)
 - store playlist aliases so you don't paste IDs/URLs repeatedly (`alias`)
 
@@ -99,16 +105,68 @@ spotmv describe gym ""   # clear the description
 
 spotmv info gym
 spotmv info liked
+
+# copy instead of move: the source keeps its tracks (dry-run by default)
+spotmv copy --source gym --dest kendrick
+spotmv copy --source gym --dest kendrick --artist "Kendrick Lamar" --apply
+
+# find tracks that appear more than once; --apply keeps the first copy of each
+spotmv dupes gym
+spotmv dupes gym --apply
+
+# which of your playlists (and Liked Songs) contain a song or artist?
+spotmv find "kendrick"
+
+# what do two playlists share, and what's only in one of them?
+spotmv diff gym kendrick
+spotmv diff gym liked
+
+# top artists, release decades, total and average length
+spotmv stats gym
 ```
 
 Aliases work anywhere a playlist argument is accepted. You can also pass a raw
 playlist ID, an `open.spotify.com` URL, or a `spotify:playlist:` URI directly.
 
+### Backups
+
+`backup` saves a playlist's track order to a local JSON file; `restore` puts the
+playlist back exactly as saved. `sort`, `dupes` and `restore` also save a backup
+automatically before they change anything.
+
+```bash
+spotmv backup gym          # save gym's current track order
+spotmv backups             # list saved backups
+spotmv backups gym         # ...only gym's
+
+# dry run: shows what would be added back, removed, or reordered
+spotmv restore xxxxxxxxxxxxxxxxxxxxxx-20260929-200853.json
+spotmv restore xxxxxxxxxxxxxxxxxxxxxx-20260929-200853.json --apply
+```
+
+`restore` takes a file name from `spotmv backups` or a path to a backup file.
+`backups` works offline; it only reads local files.
+
+### JSON output
+
+The commands that report data take `--json` for scripting: `ls`, `alias ls`,
+`info`, `tracks`, `find`, `diff`, `stats` and `backups`. Durations are in
+milliseconds, and `diff --json` has the full lists rather than the 15-track
+preview.
+
+```bash
+spotmv ls --json
+spotmv tracks gym --json | jq -r '.tracks[].title'
+```
+
 ### Liked Songs
 
 Your Liked Songs library isn't a real playlist in the Spotify API, so it never
-appears in `ls` and has no ID/URL to alias. As a convenience, `move-artist`
-accepts the keyword `liked` as a source or destination:
+appears in `ls` and has no ID/URL to alias. Instead, the keyword `liked` works
+as a playlist argument for `move-artist`, `move-all`, `copy`, `tracks`, `info`,
+`diff` and `stats`, and `find` always searches it. `collect-artist`'s
+destination and the commands that edit a playlist itself (`sort`, `dupes`,
+`rename`, `describe`, `backup`) don't accept it.
 
 ```bash
 # move an artist's liked songs into a playlist (and unlike them from your library)
@@ -125,6 +183,7 @@ spotmv move-artist --source gym --dest liked --artist "Kendrick Lamar" --apply
 ## Config location
 
 - Aliases: `~/.config/spotmv/aliases.json`
+- Backups: `~/.config/spotmv/backups/<playlist id>-<UTC timestamp>.json`
 - OAuth token cache: `~/.config/spotmv/.auth-cache`
 
 Set `SPOTMV_CONFIG_DIR` to override the location.
