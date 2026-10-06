@@ -229,3 +229,59 @@ spotmv move-artist --source gym --dest liked --artist "Kendrick Lamar" --apply
 - OAuth token cache: `~/.config/spotmv/.auth-cache`
 
 Set `SPOTMV_CONFIG_DIR` to override the location.
+
+## Project structure
+
+```
+spotmv                 launcher: puts src/ on the path and runs the CLI
+src/spotmv/
+  cli.py               builds the parser from commands/, logs in when needed,
+                       and turns failures into readable errors
+  auth.py              OAuth: credentials from the environment -> Spotify client
+  config.py            the config folder, .env lookup, and the alias store
+  refs.py              turns aliases, ids, URLs, URIs and "liked" into targets
+  api.py               reading from the API: pagination, filtering, batching
+  targets.py           playlists and Liked Songs behind one interface
+  planning.py          works out a move or copy before doing it
+  backups.py           playlist snapshots, and the restore hint on failed writes
+  output.py            tables, durations and --json
+  errors.py            SpotmvError, for expected user-facing failures
+  commands/            one module per subcommand:
+    __init__.py          the command contract, and COMMANDS (the --help order)
+    alias.py  backup.py  backups.py  collect_artist.py  copy.py  describe.py
+    diff.py  dupes.py  find.py  info.py  ls.py  move_all.py  move_artist.py
+    rename.py  restore.py  sort.py  stats.py  tracks.py
+tests/
+  conftest.py          keeps every test offline and away from your real config
+  fakes.py             FakeSpotify: an in-memory client that records each call
+  test_cli.py          pins the command-line surface
+  test_commands.py     dry runs write nothing; --apply sends the right calls
+requirements.txt       runtime dependencies
+requirements-dev.txt   adds pytest
+```
+
+## Development
+
+```bash
+./venv/bin/pip install -r requirements-dev.txt
+./venv/bin/python -m pytest -q
+```
+
+The tests never talk to Spotify: any attempt to log in fails the test, and the
+config folder is redirected to a temporary one. The suite is deliberately
+small. It pins the command-line surface, checks that every dry run makes no
+write calls and that `--apply` sends exactly the expected ones, and covers the
+move planner's arithmetic. Everything else is verified by running the real
+commands as dry runs against your own playlists.
+
+To add a command, create `src/spotmv/commands/<name>.py` with:
+
+- `register(sub)`: add the subcommand's parser and return it
+- `run(sp, args) -> int`: do the work; `sp` is the logged-in Spotify client
+- optionally `validate(args)`: reject bad input before logging in
+- optionally `NEEDS_CLIENT = False`: skip logging in (e.g. local-only commands)
+
+Then add it to `COMMANDS` in `commands/__init__.py` and to the list in
+`tests/test_cli.py`. `commands/ls.py` is the smallest example. A command that
+changes Spotify should be a dry run unless `--apply` is given, and should get a
+case in `test_dry_run_writes_nothing` and `test_apply_writes_to_the_right_places`.
